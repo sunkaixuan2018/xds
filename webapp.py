@@ -136,7 +136,7 @@ def create_app() -> Flask:
                 res["events"],
                 cfg.sys_ratio_threshold,
             )
-            system_fig_json = pio.to_json(system_fig, pretty=False)
+            system_fig_html = pio.to_html(system_fig, full_html=False, include_plotlyjs="inline")
 
             # Store minimal data for follow-up pages
             app.config["SESSIONS"][session_id] = {
@@ -177,7 +177,7 @@ def create_app() -> Flask:
                 system_stats=res["system_stats"],
                 records=res["records"].head(200).to_dict(orient="records"),
                 event_reports=res["event_reports"],
-                system_fig_json=system_fig_json,
+                system_fig_html=system_fig_html,
             )
         except Exception as e:
             flash(f"检测失败：{e}", "danger")
@@ -211,7 +211,7 @@ def create_app() -> Flask:
             system_stats=s["system_stats"],
             records=s["records_json"][:200],
             event_reports=s.get("event_reports", []),
-            system_fig_json=pio.to_json(system_fig, pretty=False),
+            system_fig_html=pio.to_html(system_fig, full_html=False, include_plotlyjs="inline"),
         )
 
     @app.get("/user/<session_id>/<user_id>")
@@ -237,7 +237,7 @@ def create_app() -> Flask:
         sys_event_mask = np_bool(s["sys_event_mask"])
 
         fig = build_user_figure(t, x, flags, sys_anom, sys_event_mask, growth, abs_z, share_z)
-        fig_json = pio.to_json(fig, pretty=False)
+        user_fig_html = pio.to_html(fig, full_html=False, include_plotlyjs="inline")
 
         # Lookup summary row
         row = next((r for r in s["records_json"] if r["user_id"] == user_id), None)
@@ -248,7 +248,7 @@ def create_app() -> Flask:
             file_name=s["file_name"],
             user_id=user_id,
             row=row,
-            fig_json=fig_json,
+            user_fig_html=user_fig_html,
             cfg=s["cfg"],
         )
 

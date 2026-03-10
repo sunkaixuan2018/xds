@@ -61,7 +61,9 @@
         <h6 class="mb-0">系统总量时序</h6>
         <span class="badge text-bg-light">系统事件数={{ system_stats.event_count }} · 事件小时={{ system_stats.event_hours_count }}</span>
       </div>
-      <div id="systemChart" class="plotly-chart"></div>
+      <div class="plotly-chart">
+        {{ system_fig_html|safe }}
+      </div>
     </div>
   </div>
 
@@ -170,9 +172,5 @@
     </div>
   </div>
 
-  <script>
-    const systemFig = JSON.parse({{ system_fig_json|tojson }});
-    Plotly.newPlot('systemChart', systemFig.data, systemFig.layout, {displayModeBar: true, responsive: true});
-  </script>
 {% endblock %}
 

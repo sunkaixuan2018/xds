@@ -68,7 +68,9 @@
           growth_threshold={{ cfg.growth_rate_threshold }} · user_k={{ cfg.user_k }} · share_z={{ cfg.share_z }}
         </span>
       </div>
-      <div id="userChart" class="plotly-chart"></div>
+      <div class="plotly-chart">
+        {{ user_fig_html|safe }}
+      </div>
       <div class="text-secondary small mt-2">
         红色点为最终判定的异常点。悬浮提示包含：growth_rate、abs_z、share_z（若系统过载）。\n
       </div>
@@ -92,9 +94,5 @@
     </div>
   {% endif %}
 
-  <script>
-    const userFig = JSON.parse({{ fig_json|tojson }});
-    Plotly.newPlot('userChart', userFig.data, userFig.layout, {displayModeBar: true, responsive: true});
-  </script>
 {% endblock %}
 
