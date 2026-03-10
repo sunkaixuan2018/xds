@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+{% set title = "检测结果" %}
+
+{% block content %}
+  <div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+    <div>
+      <h4 class="mb-1">检测结果</h4>
+      <div class="text-secondary small">
+        文件：<code>{{ file_name }}</code> · 时间范围：<code>{{ start_time }}</code> → <code>{{ end_time }}</code>
+      </div>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary" href="{{ url_for('index') }}">重新上传</a>
+      <a class="btn btn-outline-primary" href="{{ url_for('export', session_id=session_id) }}">导出 CSV</a>
+      <a class="btn btn-outline-primary" href="{{ url_for('export', session_id=session_id, format='json') }}">导出 JSON</a>
+    </div>
+  </div>
+
+  <div class="row g-3 mb-3">
+    <div class="col-md-3">
+      <div class="card stat-card shadow-sm">
+        <div class="card-body">
+          <div class="stat-label">系统均值</div>
+          <div class="stat-value">{{ "%.2f"|format(system_stats.system_avg) }}</div>
+          <div class="stat-sub text-secondary">RPM（按小时）</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="card stat-card shadow-sm">
+        <div class="card-body">
+          <div class="stat-label">系统 P95</div>
+          <div class="stat-value">{{ "%.2f"|format(system_stats.system_p95) }}</div>
+          <div class="stat-sub text-secondary">RPM</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="card stat-card shadow-sm">
+        <div class="card-body">
+          <div class="stat-label">系统峰值</div>
+          <div class="stat-value">{{ "%.2f"|format(system_stats.system_max) }}</div>
+          <div class="stat-sub text-secondary">RPM</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="card stat-card shadow-sm">
+        <div class="card-body">
+          <div class="stat-label">系统异常点</div>
+          <div class="stat-value">{{ system_stats.system_anom_hours_count }}</div>
+          <div class="stat-sub text-secondary">红菱形标注</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card shadow-sm mb-3">
+    <div class="card-body">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <h6 class="mb-0">系统总量时序</h6>
+        <span class="badge text-bg-light">系统事件数={{ system_stats.event_count }} · 事件小时={{ system_stats.event_hours_count }}</span>
+      </div>
+      <div id="systemChart" class="plotly-chart"></div>
+    </div>
+  </div>
+
+  <div class="card shadow-sm mb-3">
+    <div class="card-body">
+      <h6 class="mb-2">系统事件与主因用户（严格根因模式）</h6>
+      {% if event_reports and event_reports|length > 0 %}
+        <div class="row g-3">
+          {% for ev in event_reports %}
+            <div class="col-lg-6">
+              <div class="border rounded p-3 bg-white">
+                <div class="d-flex justify-content-between align-items-center">
+                  <div class="fw-semibold">事件窗口：H{{ ev.start_hour }} ~ H{{ ev.end_hour }}</div>
+                  <span class="badge text-bg-warning">duration={{ ev.duration_hours }}h</span>
+                </div>
+                <div class="small text-secondary mt-1">
+                  系统峰值：H{{ ev.system_peak_hour }}（{{ "%.0f"|format(ev.system_peak_rpm) }} RPM）
+                </div>
+                <div class="mt-2">
+                  <div class="small text-secondary mb-1">主因用户（按超额贡献）</div>
+                  {% if ev.culprits and ev.culprits|length > 0 %}
+                    <ul class="mb-0">
+                      {% for c in ev.culprits %}
+                        <li class="small">
+                          <code>{{ c.user_id }}</code>
+                          <span class="text-secondary">贡献占比 {{ "%.1f"|format(c.excess_ratio*100) }}%</span>
+                          <span class="text-secondary">· 峰值 H{{ c.peak_hour }}（{{ "%.0f"|format(c.peak_rpm) }}）</span>
+                          <a class="ms-2" href="{{ url_for('user_detail', session_id=session_id, user_id=c.user_id) }}">详情</a>
+                        </li>
+                      {% endfor %}
+                    </ul>
+                  {% else %}
+                    <div class="small text-secondary">未定位到主因用户（excess=0）。</div>
+                  {% endif %}
+                    <div class="mt-2">
+                      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('event_detail', session_id=session_id, event_idx=loop.index0) }}">
+                        查看处置建议
+                      </a>
+                    </div>
+                </div>
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="text-secondary small">未检测到系统事件窗口（可尝试降低系统阈值或检查数据）。</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card shadow-sm">
+    <div class="card-body">
+      <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+        <h6 class="mb-0">Top 异常用户（最多显示 200 行）</h6>
+        <div class="d-flex gap-2">
+          <span class="badge text-bg-light">user_k={{ cfg.user_k }}</span>
+          <span class="badge text-bg-light">share_z={{ cfg.share_z }}</span>
+          <span class="badge text-bg-light">growth_threshold={{ cfg.growth_rate_threshold }}</span>
+        </div>
+      </div>
+
+      {% if records and records|length > 0 %}
+        <div class="table-responsive">
+          <table class="table table-sm align-middle">
+            <thead>
+              <tr class="text-secondary">
+                <th>user_id</th>
+                <th class="text-end">hit_count</th>
+                <th class="text-end">avg</th>
+                <th class="text-end">p95</th>
+                <th class="text-end">max</th>
+                <th>reason</th>
+                <th>hit_hours</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for r in records %}
+                <tr>
+                  <td><code>{{ r.user_id }}</code></td>
+                  <td class="text-end">{{ r.hit_count }}</td>
+                  <td class="text-end">{{ "%.1f"|format(r.avg_rpm) }}</td>
+                  <td class="text-end">{{ "%.1f"|format(r.p95_rpm) }}</td>
+                  <td class="text-end">{{ "%.1f"|format(r.max_rpm) }}</td>
+                  <td>
+                    <span class="badge {{ 'text-bg-danger' if r.reason=='overload_share_and_growth' else 'text-bg-warning' }}">
+                      {{ r.reason }}
+                    </span>
+                  </td>
+                  <td class="text-secondary small text-truncate" style="max-width: 260px;">
+                    {{ r.hit_hours }}
+                  </td>
+                  <td class="text-end">
+                    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('user_detail', session_id=session_id, user_id=r.user_id) }}">
+                      查看详情
+                    </a>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class="text-secondary">未检测到异常用户（可以尝试降低阈值或检查数据格式）。</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <script>
+    const systemFig = JSON.parse({{ system_fig_json|tojson }});
+    Plotly.newPlot('systemChart', systemFig.data, systemFig.layout, {displayModeBar: true, responsive: true});
+  </script>
+{% endblock %}
+

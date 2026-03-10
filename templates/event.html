@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% set title = "事件详情与处置建议" %}
+
+{% block content %}
+  <div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+    <div>
+      <h4 class="mb-1">事件详情与处置建议</h4>
+      <div class="text-secondary small">
+        文件：<code>{{ file_name }}</code> ·
+        <a href="{{ url_for('results', session_id=session_id) }}">返回结果页</a>
+      </div>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary" href="{{ url_for('results', session_id=session_id) }}">返回</a>
+    </div>
+  </div>
+
+  <div class="card shadow-sm mb-3">
+    <div class="card-body">
+      <div class="d-flex justify-content-between align-items-center">
+        <div class="fw-semibold">事件窗口：H{{ ev.start_hour }} ~ H{{ ev.end_hour }}</div>
+        <span class="badge text-bg-warning">duration={{ ev.duration_hours }}h</span>
+      </div>
+      <div class="small text-secondary mt-1">
+        时间范围：<code>{{ start_dt }}</code> → <code>{{ end_dt }}</code>
+      </div>
+      <div class="small text-secondary mt-1">
+        系统峰值：H{{ ev.system_peak_hour }}（{{ "%.0f"|format(ev.system_peak_rpm) }} RPM）
+      </div>
+      <hr />
+      <div class="small text-secondary mb-2">主因用户（按超额贡献）</div>
+      {% if ev.culprits and ev.culprits|length > 0 %}
+        <div class="table-responsive">
+          <table class="table table-sm align-middle">
+            <thead>
+              <tr class="text-secondary">
+                <th>user_id</th>
+                <th class="text-end">贡献占比</th>
+                <th class="text-end">峰值</th>
+                <th class="text-end">峰值小时</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for c in ev.culprits %}
+                <tr>
+                  <td><code>{{ c.user_id }}</code></td>
+                  <td class="text-end">{{ "%.1f"|format(c.excess_ratio*100) }}%</td>
+                  <td class="text-end">{{ "%.0f"|format(c.peak_rpm) }}</td>
+                  <td class="text-end">H{{ c.peak_hour }}</td>
+                  <td class="text-end">
+                    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('user_detail', session_id=session_id, user_id=c.user_id) }}">查看用户曲线</a>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class="text-secondary small">未定位到主因用户。</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="row g-3">
+    <div class="col-lg-4">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <h6 class="mb-2">处置建议总览</h6>
+          <div class="small text-secondary mb-2">推荐强度：<b>{{ recommendations.summary.throttle_level }}</b></div>
+          <div class="small text-secondary">{{ recommendations.summary.why }}</div>
+        </div>
+      </div>
+      <div class="card shadow-sm mt-3">
+        <div class="card-body">
+          <h6 class="mb-2">当前检测参数（节选）</h6>
+          <div class="small text-secondary">
+            sys_ratio_threshold=<code>{{ cfg.sys_ratio_threshold }}</code><br/>
+            sys_robust_z=<code>{{ cfg.sys_robust_z }}</code><br/>
+            sys_growth_rate_threshold=<code>{{ cfg.sys_growth_rate_threshold }}</code><br/>
+            event_min_len=<code>{{ cfg.event_min_len }}</code> · max_events=<code>{{ cfg.max_events }}</code>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-8">
+      <div class="card shadow-sm mb-3">
+        <div class="card-body">
+          <h6 class="mb-2">系统层（保护整体可用性）</h6>
+          <div class="list-group list-group-flush">
+            {% for item in recommendations.system_layer %}
+              <div class="list-group-item">
+                <div class="fw-semibold">{{ item.title }}</div>
+                <div class="small text-secondary"><b>何时</b>：{{ item.when }}</div>
+                <div class="small text-secondary"><b>动作</b>：{{ item.action }}</div>
+                <div class="small text-secondary"><b>目的</b>：{{ item.goal }}</div>
+              </div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+
+      <div class="card shadow-sm mb-3">
+        <div class="card-body">
+          <h6 class="mb-2">租户层（精准处理 noisy neighbor）</h6>
+          <div class="list-group list-group-flush">
+            {% for item in recommendations.tenant_layer %}
+              <div class="list-group-item">
+                <div class="fw-semibold">{{ item.title }}</div>
+                <div class="small text-secondary"><b>何时</b>：{{ item.when }}</div>
+                <div class="small text-secondary"><b>动作</b>：{{ item.action }}</div>
+                <div class="small text-secondary"><b>目的</b>：{{ item.goal }}</div>
+              </div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <h6 class="mb-2">流量工程（整流/分流/扩容）</h6>
+          <div class="list-group list-group-flush">
+            {% for item in recommendations.traffic_engineering %}
+              <div class="list-group-item">
+                <div class="fw-semibold">{{ item.title }}</div>
+                <div class="small text-secondary"><b>何时</b>：{{ item.when }}</div>
+                <div class="small text-secondary"><b>动作</b>：{{ item.action }}</div>
+                <div class="small text-secondary"><b>目的</b>：{{ item.goal }}</div>
+              </div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+{% endblock %}
+

@@ -1,0 +1,25 @@
+.plotly-chart {
+  width: 100%;
+}
+
+.stat-card .stat-label {
+  font-size: 0.8rem;
+  color: #6c757d;
+}
+
+.stat-card .stat-value {
+  font-size: 1.35rem;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.stat-card .stat-sub {
+  font-size: 0.8rem;
+}
+
+code {
+  background: rgba(13, 110, 253, 0.08);
+  padding: 0.05rem 0.25rem;
+  border-radius: 0.25rem;
+}
+
