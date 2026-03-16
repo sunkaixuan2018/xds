@@ -34,20 +34,37 @@ def parse_collect_time_std(df: pd.DataFrame) -> pd.DataFrame:
         raise ValueError("缺少列 collect_time_std，无法按小时聚合。")
 
     df = df.copy()
-    print("[time] 按格式 %Y/%m/%d %H:%M 解析 collect_time_std ...")
-    df["collect_time_std"] = pd.to_datetime(
-        df["collect_time_std"],
-        format="%Y/%m/%d %H:%M",
-        errors="coerce",
-    )
+    # 先尝试显式格式（无秒），再对失败的部分用 pandas 自动推断（支持带秒、额外空格等）
+    print("[time] 第一步：按格式 %Y/%m/%d %H:%M 解析 collect_time_std ...")
+    s = df["collect_time_std"].astype(str).str.strip()
+    t = pd.to_datetime(s, format="%Y/%m/%d %H:%M", errors="coerce")
+
+    # 对还没解析成功的记录，做第二步：不指定 format，让 pandas 自动推断
+    mask_step1_fail = t.isna() & s.notna() & (s.str.len() > 0)
+    if mask_step1_fail.any():
+        print(f"[time] 第一步失败 {mask_step1_fail.sum()} 行，开始第二步自动推断格式（支持带秒、不同空格等）...")
+        t2 = pd.to_datetime(s[mask_step1_fail], errors="coerce")
+        t.loc[mask_step1_fail] = t2
+
+    df["collect_time_std"] = t
+
+    # 统计两步之后仍失败的原始字符串，便于后续针对性适配
+    fail_mask = df["collect_time_std"].isna() & s.notna() & (s.str.len() > 0)
+    if fail_mask.any():
+        failed_values = s[fail_mask]
+        vc = failed_values.value_counts()
+        print(f"[time] 两步解析仍失败的行数: {fail_mask.sum()}，不同格式种类数: {len(vc)}")
+        print("[time] 失败格式 Top 20（格式示例 -> 次数）:")
+        for val, cnt in vc.head(20).items():
+            print(f"    '{val}' -> {cnt}")
 
     before = len(df)
     df = df.dropna(subset=["collect_time_std"])
     after = len(df)
     if after == 0:
-        raise ValueError("collect_time_std 列全部解析失败，请检查时间格式是否为 2026/1/21 0:05 这类。")
+        raise ValueError("collect_time_std 列全部解析失败，请检查时间格式是否为 2026/1/21 0:05 / 2026/1/21 0:05:00 这类。")
     if after < before:
-        print(f"[time] 有 {before - after} 行时间解析失败已被丢弃。")
+        print(f"[time] 共有 {before - after} 行时间解析失败已被丢弃（两步解析均失败）。")
 
     # pandas 2.2+ 推荐使用小写 'h'
     df["collect_hour"] = df["collect_time_std"].dt.floor("h")
