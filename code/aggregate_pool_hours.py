@@ -18,11 +18,15 @@ def load_all_csv() -> pd.DataFrame:
 
     dfs: list[pd.DataFrame] = []
     for f in files:
-        df = pd.read_csv(f)
+        print(f"[load] 读取文件: {f.name}")
+        df = pd.read_csv(f, encoding="utf-8")
+        print(f"       行数: {len(df)}")
         df["__source_file"] = f.name
         dfs.append(df)
 
-    return pd.concat(dfs, ignore_index=True)
+    combined = pd.concat(dfs, ignore_index=True)
+    print(f"[load] 合并后总行数: {len(combined)}")
+    return combined
 
 
 def parse_collect_time_std(df: pd.DataFrame) -> pd.DataFrame:
@@ -30,12 +34,24 @@ def parse_collect_time_std(df: pd.DataFrame) -> pd.DataFrame:
         raise ValueError("缺少列 collect_time_std，无法按小时聚合。")
 
     df = df.copy()
-    df["collect_time_std"] = pd.to_datetime(df["collect_time_std"], errors="coerce")
-    if df["collect_time_std"].isna().all():
-        raise ValueError("collect_time_std 列解析失败，请检查时间格式。")
+    print("[time] 按格式 %Y/%m/%d %H:%M 解析 collect_time_std ...")
+    df["collect_time_std"] = pd.to_datetime(
+        df["collect_time_std"],
+        format="%Y/%m/%d %H:%M",
+        errors="coerce",
+    )
+
+    before = len(df)
+    df = df.dropna(subset=["collect_time_std"])
+    after = len(df)
+    if after == 0:
+        raise ValueError("collect_time_std 列全部解析失败，请检查时间格式是否为 2026/1/21 0:05 这类。")
+    if after < before:
+        print(f"[time] 有 {before - after} 行时间解析失败已被丢弃。")
 
     # pandas 2.2+ 推荐使用小写 'h'
     df["collect_hour"] = df["collect_time_std"].dt.floor("h")
+    print(f"[time] 时间范围: {df['collect_hour'].min()} ~ {df['collect_hour'].max()}")
     return df
 
 
@@ -53,8 +69,8 @@ def build_hour_range(series: pd.Series) -> pd.DatetimeIndex:
 
 
 def hour_label(dt: pd.Timestamp) -> str:
-    # 示例：2026/1/21 0:00:00
-    return f"{dt.year}/{dt.month}/{dt.day} {dt.hour}:00:00"
+    # 与示例脚本保持一致：2026-01-21 00:00
+    return dt.strftime("%Y-%m-%d %H:%M")
 
 
 def aggregate_by_pool_and_user(df: pd.DataFrame, metric: str = "rpm") -> None:
@@ -94,6 +110,8 @@ def aggregate_by_pool_and_user(df: pd.DataFrame, metric: str = "rpm") -> None:
             g = g[g["collect_hour"].notna()].copy()
             if g.empty:
                 continue
+
+            print(f"[pool] 处理池子: {pool}，行数: {len(g)}，用户数(domain_id): {g['domain_id'].nunique()}")
 
             hour_index = build_hour_range(g["collect_hour"])
 
