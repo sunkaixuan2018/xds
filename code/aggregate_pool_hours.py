@@ -46,6 +46,33 @@ def parse_collect_time_std(df: pd.DataFrame) -> pd.DataFrame:
         t2 = pd.to_datetime(s[mask_step1_fail], errors="coerce")
         t.loc[mask_step1_fail] = t2
 
+        # 将自动推断成功的部分按照“格式特征”分组，每类打印一个样例（原始字符串 + 解析后的标准格式）
+        success_mask = mask_step1_fail & t.notna()
+        if success_mask.any():
+            print("[time] 自动推断成功的格式类别示例（每类 1 条，原始 -> 解析后）：")
+
+            def fmt_key(val: str) -> tuple:
+                # 按一些简单特征分组：长度、冒号数量、是否包含秒、“T”/空格分隔等
+                return (
+                    len(val),
+                    val.count(":"),
+                    "T" in val,
+                    " " in val,
+                    "/" in val,
+                    "-" in val,
+                )
+
+            seen_keys = set()
+            for raw in s[success_mask]:
+                key = fmt_key(raw)
+                if key in seen_keys:
+                    continue
+                seen_keys.add(key)
+                parsed = pd.to_datetime(raw, errors="coerce")
+                if pd.isna(parsed):
+                    continue
+                print(f"    '{raw}' -> '{parsed.strftime('%Y-%m-%d %H:%M:%S')}'")
+
     df["collect_time_std"] = t
 
     # 统计两步之后仍失败的原始字符串，便于后续针对性适配
