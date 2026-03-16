@@ -187,20 +187,67 @@ def load_dataframe(file_path: str) -> pd.DataFrame:
 
 
 def validate_and_prepare(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
-    if "user_id" not in df.columns:
-        raise ValueError("缺少列 user_id。期望列：user_id, H0..H167, (可选) Total")
+    """
+    数据列自适应规则：
+    - 默认**第一列**为用户 ID（不再强制列名为 user_id），内部会统一重命名为 user_id；
+    - 其余列视为时间序列列，支持：
+      - 旧格式：H0, H1, ...（小时索引）；
+      - 新格式：具体时间字符串/Excel 时间（如 2026-01-01 15:00）；
+    - 最后一列若为 Total/sum（大小写不敏感），则视为总量列，否则按所有时间列行求和生成 Total。
+    """
+    if df.shape[1] < 2:
+        raise ValueError("数据列不足，至少需要一列用户标识和若干时间列。")
 
-    h_cols = _parse_hour_columns(df)
+    # 统一把列名转成字符串，兼容 Excel datetime 类型的列名
+    df = df.copy()
+    df.columns = [str(c) for c in df.columns]
+
+    # 1) 第一列固定视为 user_id
+    first_col = df.columns[0]
+
+    # 2) 优先兼容旧格式：显式 user_id + H0..Hn
+    h_cols_legacy = _parse_hour_columns(df)
+    if "user_id" in df.columns and len(h_cols_legacy) >= 24:
+        out = df.copy()
+        out["user_id"] = out["user_id"].astype(str)
+        h_cols = h_cols_legacy
+    else:
+        # 3) 新格式：第一列为 user_id，其余为时间列（最后一列可选为总量列）
+        out = df.copy()
+        out["user_id"] = out[first_col].astype(str)
+
+        candidate_cols = list(out.columns[1:])
+        if not candidate_cols:
+            raise ValueError("缺少时间序列列。请确保第一列为用户标识，后面至少有 24 列时间数据。")
+
+        # 检测最后一列是否为总量列（Total/sum，大小写不敏感）
+        last_col = candidate_cols[-1]
+        last_name = last_col.strip().lower()
+        if last_name in {"total", "sum"}:
+            time_cols = candidate_cols[:-1]
+            total_col = last_col
+        else:
+            time_cols = candidate_cols
+            total_col = None
+
+        h_cols = time_cols
+
     if len(h_cols) < 24:
-        raise ValueError("未找到足够的小时列（H0, H1, ...）。至少需要 24 列。")
+        raise ValueError("未找到足够的时间列（H0, H1, ... 或具体时间列）。至少需要 24 列。")
 
-    out = df.copy()
-    out["user_id"] = out["user_id"].astype(str)
-
-    # Ensure numeric
+    # 统一保证小时/时间列为数值
     out[h_cols] = out[h_cols].apply(pd.to_numeric, errors="coerce").fillna(0)
-    if "Total" not in out.columns:
-        out["Total"] = out[h_cols].sum(axis=1)
+
+    # 处理 Total 列：已有的直接清洗为数值，否则按时间列求和
+    if "Total" in out.columns:
+        out["Total"] = pd.to_numeric(out["Total"], errors="coerce").fillna(0)
+    else:
+        # 如果通过新格式检测到了 total_col，但列名不是 "Total"，沿用其值
+        if "total_col" in locals() and total_col is not None and total_col in out.columns:
+            out["Total"] = pd.to_numeric(out[total_col], errors="coerce").fillna(0)
+        else:
+            out["Total"] = out[h_cols].sum(axis=1)
+
     return out, h_cols
 
 
