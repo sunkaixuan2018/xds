@@ -73,12 +73,23 @@ def aggregate_by_pool_and_user(df: pd.DataFrame, metric: str = "rpm") -> None:
     df = df.copy()
     df[metric] = pd.to_numeric(df[metric], errors="coerce").fillna(0.0)
 
+    # 归一化池子 ID：a-b-c-d-e 只看前四段 a-b-c-d，e 部分允许有轻微变化
+    def normalize_pool(x: str) -> str:
+        if not isinstance(x, str):
+            x = str(x)
+        parts = x.split("-")
+        if len(parts) >= 4:
+            return "-".join(parts[:4])
+        return x
+
+    df["__pool_group"] = df["infer_service_id"].astype(str).map(normalize_pool)
+
     writer_path = RESULT_DIR / "pool_hourly_summary.xlsx"
 
     with pd.ExcelWriter(writer_path, engine="openpyxl") as writer:
         wrote_any = False
-        # 每个 infer_service_id 一个 sheet
-        for pool, g in df.groupby("infer_service_id"):
+        # 每个归一化后的池子 ID（前四段）一个 sheet
+        for pool, g in df.groupby("__pool_group"):
             # 只保留有合法 collect_hour 的数据
             g = g[g["collect_hour"].notna()].copy()
             if g.empty:
@@ -88,7 +99,7 @@ def aggregate_by_pool_and_user(df: pd.DataFrame, metric: str = "rpm") -> None:
 
             # groupby(pool_id, domain_id, hour) 求和
             grouped = (
-                g.groupby(["infer_service_id", "domain_id", "collect_hour"])[metric]
+                g.groupby(["__pool_group", "domain_id", "collect_hour"])[metric]
                 .sum()
                 .reset_index()
             )
