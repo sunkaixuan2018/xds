@@ -149,13 +149,20 @@ def aggregate_by_pool_and_user(df: pd.DataFrame, metric: str = "rpm") -> None:
     with pd.ExcelWriter(writer_path, engine="openpyxl") as writer:
         wrote_any = False
         # 每个归一化后的池子 ID（前四段）一个 sheet
+        # 先按用户数(domain_id 去重)降序排序，让用户多的池子排在前面
+        grouped_pools: list[tuple[str, pd.DataFrame, int]] = []
         for pool, g in df.groupby("__pool_group"):
-            # 只保留有合法 collect_hour 的数据
-            g = g[g["collect_hour"].notna()].copy()
-            if g.empty:
+            g2 = g[g["collect_hour"].notna()]
+            if g2.empty:
                 continue
+            user_cnt = int(g2["domain_id"].nunique())
+            grouped_pools.append((str(pool), g2.copy(), user_cnt))
 
-            print(f"[pool] 处理池子: {pool}，行数: {len(g)}，用户数(domain_id): {g['domain_id'].nunique()}")
+        grouped_pools.sort(key=lambda x: x[2], reverse=True)
+
+        for pool, g, user_cnt in grouped_pools:
+            # 只保留有合法 collect_hour 的数据
+            print(f"[pool] 处理池子: {pool}，行数: {len(g)}，用户数(domain_id): {user_cnt}")
 
             hour_index = build_hour_range(g["collect_hour"])
 
