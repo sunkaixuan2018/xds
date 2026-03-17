@@ -22,6 +22,8 @@ class DetectorConfig:
     sys_robust_z: float = 4.0
     sys_growth_rate_threshold: float = 0.15  # auxiliary; primary gate uses ratio to seasonal median
     sys_ratio_threshold: float = 1.10  # +10% over seasonal median (same hour-of-day)
+    # Single-hour extreme ratio: treat very sharp spikes as standalone events
+    sys_extreme_ratio: float = 1.30  # e.g. 30%+ over seasonal median, even if not consecutive
     event_min_len: int = 2
     event_merge_gap: int = 1
     seasonal_period: int = 24
@@ -280,6 +282,23 @@ def detect_anomalies(
     # System anomaly points: (ratio gate) AND (robust-z OR burst)
     sys_anom = sys_ratio_anom & (sys_level_anom | sys_burst)
     events = _mask_to_events(sys_anom, min_len=cfg.event_min_len, merge_gap=cfg.event_merge_gap)
+
+    # 补充：对“单点极端偏离”的异常也认为是独立事件（即使不连续）
+    if hours:
+        covered = np.zeros_like(sys_anom, dtype=bool)
+        for (a, b) in events:
+            covered[a : b + 1] = True
+        extra_events: list[tuple[int, int]] = []
+        for h in range(hours):
+            if covered[h]:
+                continue
+            if not sys_anom[h]:
+                continue
+            # ratio 明显超过更高阈值（例如 30%+），视为单点事件
+            if np.isfinite(ratio[h]) and ratio[h] >= cfg.sys_extreme_ratio:
+                extra_events.append((h, h))
+        if extra_events:
+            events = list(events) + extra_events
 
     # Keep only top-N strongest events (by system peak ratio)
     if events and cfg.max_events and len(events) > cfg.max_events:
