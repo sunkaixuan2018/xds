@@ -23,7 +23,11 @@ class DetectorConfig:
     sys_growth_rate_threshold: float = 0.15  # auxiliary; primary gate uses ratio to seasonal median
     sys_ratio_threshold: float = 1.10  # +10% over seasonal median (same hour-of-day)
     # Single-hour extreme ratio: treat very sharp spikes as standalone events
-    sys_extreme_ratio: float = 1.30  # e.g. 30%+ over seasonal median, even if not consecutive
+    sys_extreme_ratio: float = 1.50  # 50%+ over seasonal median, even if not consecutive
+
+    # Warm-up: skip detection for early hours where baselines are unreliable.
+    # Typical choice: 48h so seasonal same-hour median has at least 2 historical points.
+    warmup_hours: int = 48
     event_min_len: int = 2
     event_merge_gap: int = 1
     seasonal_period: int = 24
@@ -275,19 +279,7 @@ def detect_anomalies(
     sys_level_anom = sys_rz >= cfg.sys_robust_z
 
     # Primary gate: ratio over seasonal median (filters out normal diurnal ramps)
-    # NOTE:
-    # seasonal median requires >=2 historical same-hour points, so early hours can be NaN.
-    # To avoid missing single-hour extreme spikes early in the series, fall back to a rolling median
-    # on past points only (shifted by 1) when seasonal median is unavailable.
-    med_seasonal = _seasonal_median(S, period=cfg.seasonal_period, lookback=cfg.seasonal_lookback)
-    med_roll = (
-        pd.Series(S.astype(float))
-        .shift(1)
-        .rolling(window=cfg.baseline_window_hours, min_periods=cfg.min_baseline_points)
-        .median()
-        .to_numpy()
-    )
-    med = np.where(np.isfinite(med_seasonal) & (med_seasonal > 0), med_seasonal, med_roll)
+    med = _seasonal_median(S, period=cfg.seasonal_period, lookback=cfg.seasonal_lookback)
     ratio = np.where(np.isfinite(med) & (med > 0), S / med, np.nan)
     sys_ratio_anom = ratio >= cfg.sys_ratio_threshold
 
@@ -297,6 +289,14 @@ def detect_anomalies(
     sys_anom_normal = sys_ratio_anom & (sys_level_anom | sys_burst)
     sys_anom_extreme = np.isfinite(ratio) & (ratio >= cfg.sys_extreme_ratio)
     sys_anom = sys_anom_normal | sys_anom_extreme
+
+    # Warm-up: do not detect anomalies in early hours
+    if cfg.warmup_hours and hours:
+        w = int(min(max(cfg.warmup_hours, 0), hours))
+        if w > 0:
+            sys_anom_normal[:w] = False
+            sys_anom_extreme[:w] = False
+            sys_anom[:w] = False
     events = _mask_to_events(sys_anom, min_len=cfg.event_min_len, merge_gap=cfg.event_merge_gap)
 
     # 补充：对“单点极端偏离”的异常也认为是独立事件（即使不连续）
@@ -308,7 +308,7 @@ def detect_anomalies(
         for h in range(hours):
             if covered[h]:
                 continue
-            # ratio 明显超过更高阈值（例如 30%+），视为单点事件（即使未形成连续窗口）
+            # ratio 明显超过更高阈值（例如 50%+），视为单点事件（即使未形成连续窗口）
             if bool(sys_anom_extreme[h]):
                 extra_events.append((h, h))
         if extra_events:
