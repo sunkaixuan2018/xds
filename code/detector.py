@@ -315,17 +315,34 @@ def detect_anomalies(
             events = list(events) + extra_events
 
     # Keep only top-N strongest events (by system peak ratio)
-    # Important: preserve single-hour extreme events as much as possible.
+    # Important:
+    # - cfg.max_events is meant to cap long/continuous event windows for root-cause reporting.
+    # - single-hour extreme spikes (ratio >= sys_extreme_ratio) should NOT be dropped by this cap,
+    #   otherwise the "3h+3h + many 1h extreme spikes" case will miss the later spikes.
+    if events:
+        # de-dup in case an extreme point is also part of a longer window (or added twice)
+        events = sorted(set(tuple(w) for w in events))
+
     if events and cfg.max_events and len(events) > cfg.max_events:
-        scored = []
+        extreme_single_events = []
+        normal_events = []
         for (a, b) in events:
-            peak = float(np.nanmax(ratio[a : b + 1]))
-            is_extreme_single = (a == b) and bool(np.isfinite(ratio[a])) and bool(ratio[a] >= cfg.sys_extreme_ratio)
-            # Add a tiny bonus so extreme single points are not accidentally dropped on ties.
-            scored.append(((a, b), peak + (1e-6 if is_extreme_single else 0.0)))
-        scored.sort(key=lambda x: x[1], reverse=True)
-        events = [w for (w, _) in scored[: cfg.max_events]]
-        events.sort()
+            if a == b and bool(sys_anom_extreme[a]):
+                extreme_single_events.append((a, b))
+            else:
+                normal_events.append((a, b))
+
+        # Cap only normal events by their peak ratio
+        if len(normal_events) > cfg.max_events:
+            scored = []
+            for (a, b) in normal_events:
+                peak = float(np.nanmax(ratio[a : b + 1]))
+                scored.append(((a, b), peak))
+            scored.sort(key=lambda x: x[1], reverse=True)
+            normal_events = [w for (w, _) in scored[: cfg.max_events]]
+
+        # Always keep all extreme single-hour events
+        events = sorted(set(normal_events + extreme_single_events))
 
     # Build event mask for strict root-cause mode
     sys_event_mask = np.zeros_like(sys_anom, dtype=bool)
