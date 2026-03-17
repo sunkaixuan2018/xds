@@ -316,10 +316,13 @@ def main() -> int:
 
     cfg = Config(users=args.users, seed=args.seed, growth_rate_threshold=args.growth_threshold)
 
-    base_dir = Path(__file__).resolve().parent
-    result_dir = base_dir / "result"
+    # 统一：输入 fake_rpm_data.xlsx 放在项目根 data/，检测结果写到项目根 result/
+    project_root = Path(__file__).resolve().parents[1]
+    data_dir = project_root / "data"
+    result_dir = project_root / "result"
+    data_dir.mkdir(exist_ok=True)
     result_dir.mkdir(exist_ok=True)
-    xlsx_path = result_dir / cfg.output_xlsx
+    xlsx_path = data_dir / cfg.output_xlsx
     results_csv = result_dir / cfg.output_results_csv
 
     if args.regenerate or (not xlsx_path.exists()):
