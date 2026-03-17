@@ -12,6 +12,7 @@ import plotly.graph_objects as go
 import plotly.io as pio
 from plotly.subplots import make_subplots
 import numpy as np
+import pandas as pd
 from flask import (
     Flask,
     Response,
@@ -55,6 +56,8 @@ def create_app() -> Flask:
 
     # In-memory session cache: session_id -> dict(result, meta, created_at)
     app.config["SESSIONS"] = {}
+    # 池子分析：上传 result Excel 后的临时信息 upload_id -> { file_path, sheet_names, file_name }
+    app.config["POOL_UPLOADS"] = {}
 
     @app.get("/")
     def index():
@@ -182,6 +185,122 @@ def create_app() -> Flask:
         except Exception as e:
             flash(f"检测失败：{e}", "danger")
             return redirect(url_for("index"))
+
+    # ---------- 池子分析流程：上传 result Excel -> 选 sheet -> 分析该池子用户异常 ----------
+    @app.get("/pool")
+    def pool_index():
+        return render_template("pool_upload.html")
+
+    @app.post("/pool")
+    def pool_upload():
+        f = request.files.get("file")
+        if not f or not f.filename:
+            flash("请先选择 result 目录下生成的 Excel 文件（.xlsx）。", "danger")
+            return redirect(url_for("pool_index"))
+        if not (f.filename.lower().endswith(".xlsx") or f.filename.lower().endswith(".xls")):
+            flash("请上传 Excel 文件（.xlsx / .xls）。", "danger")
+            return redirect(url_for("pool_index"))
+        filename = secure_filename(f.filename)
+        upload_id = uuid.uuid4().hex
+        saved_path = UPLOAD_DIR / f"pool_{upload_id}__{filename}"
+        f.save(saved_path)
+        try:
+            xl = pd.ExcelFile(saved_path)
+            sheet_names = xl.sheet_names
+            xl.close()
+        except Exception as e:
+            flash(f"读取 Excel 失败：{e}", "danger")
+            return redirect(url_for("pool_index"))
+        if not sheet_names:
+            flash("该 Excel 中没有任何 sheet。", "danger")
+            return redirect(url_for("pool_index"))
+        app.config["POOL_UPLOADS"][upload_id] = {
+            "file_path": str(saved_path),
+            "sheet_names": sheet_names,
+            "file_name": filename,
+        }
+        return redirect(url_for("pool_select", upload_id=upload_id))
+
+    @app.get("/pool/<upload_id>/select")
+    def pool_select(upload_id: str):
+        info = app.config["POOL_UPLOADS"].get(upload_id)
+        if not info:
+            flash("上传已过期或无效，请重新上传 Excel。", "warning")
+            return redirect(url_for("pool_index"))
+        return render_template(
+            "pool_select.html",
+            upload_id=upload_id,
+            file_name=info["file_name"],
+            sheet_names=info["sheet_names"],
+        )
+
+    @app.post("/pool/<upload_id>/analyze")
+    def pool_analyze(upload_id: str):
+        info = app.config["POOL_UPLOADS"].get(upload_id)
+        if not info:
+            flash("上传已过期或无效，请重新上传 Excel。", "warning")
+            return redirect(url_for("pool_index"))
+        sheet_name = request.form.get("sheet_name", "").strip()
+        if not sheet_name or sheet_name not in info["sheet_names"]:
+            flash("请选择一个有效的池子（sheet）。", "danger")
+            return redirect(url_for("pool_select", upload_id=upload_id))
+        try:
+            df = pd.read_excel(info["file_path"], sheet_name=sheet_name)
+            df.columns = [str(c) for c in df.columns]
+            if df.shape[0] == 0 or df.shape[1] < 25:
+                raise ValueError("该 sheet 行数或列数不足（需要至少一列用户标识 + 24 列时间）。")
+            df, h_cols = validate_and_prepare(df)
+            # 起始时间从第一个时间列名解析，如 "2026-01-18 16:00"
+            try:
+                start_ts = pd.to_datetime(h_cols[0], errors="coerce")
+                start_time = start_ts.to_pydatetime() if hasattr(start_ts, "to_pydatetime") else datetime(2026, 1, 1, 0, 0)
+            except Exception:
+                start_time = datetime(2026, 1, 1, 0, 0)
+            cfg = DetectorConfig()
+            res = detect_anomalies(cfg, df, h_cols)
+            hours = len(h_cols)
+            t = build_time_index(start_time=start_time, hours=hours)
+            system_fig = build_system_figure(
+                t,
+                res["S"],
+                res["system_median"],
+                res["system_ratio"],
+                res["sys_anom"],
+                res["sys_event_mask"],
+                res["events"],
+                cfg.sys_ratio_threshold,
+            )
+            system_fig_html = pio.to_html(system_fig, full_html=False, include_plotlyjs="inline")
+            session_id = uuid.uuid4().hex
+            app.config["SESSIONS"][session_id] = {
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "file_name": f"{info['file_name']} (池子: {sheet_name})",
+                "saved_path": info["file_path"],
+                "start_time": start_time.isoformat(timespec="minutes"),
+                "cfg": asdict(cfg),
+                "t": [dt.isoformat() for dt in t],
+                "h_cols": h_cols,
+                "S": res["S"].tolist(),
+                "system_median": np.asarray(res["system_median"], dtype=float).tolist(),
+                "system_ratio": np.asarray(res["system_ratio"], dtype=float).tolist(),
+                "sys_anom": res["sys_anom"].astype(bool).tolist(),
+                "sys_event_mask": res["sys_event_mask"].astype(bool).tolist(),
+                "events": res["events"],
+                "event_reports": res["event_reports"],
+                "user_ids": res["user_ids"],
+                "records_csv": res["records"].to_csv(index=False, encoding="utf-8"),
+                "records_json": res["records"].to_dict(orient="records"),
+                "system_stats": res["system_stats"],
+                "X": res["X"].tolist(),
+                "flags": res["flags"].astype(bool).tolist(),
+                "growth": res["growth"].tolist(),
+                "abs_z": res["abs_z"].tolist(),
+                "share_z": res["share_z"].tolist(),
+            }
+            return redirect(url_for("results", session_id=session_id))
+        except Exception as e:
+            flash(f"分析失败：{e}", "danger")
+            return redirect(url_for("pool_select", upload_id=upload_id))
 
     @app.get("/results/<session_id>")
     def results(session_id: str):

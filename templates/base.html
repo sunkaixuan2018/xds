@@ -14,6 +14,9 @@
           <img src="{{ url_for('static', filename='logo.svg') }}" alt="logo" width="26" height="26" />
           <span>多租户 RPM 异常检测</span>
         </a>
+        <div class="navbar-nav ms-auto">
+          <a class="nav-link text-light" href="{{ url_for('pool_index') }}">按池子分析</a>
+        </div>
         <div class="navbar-text text-secondary small">
           localhost 工具 · Flask + Plotly
         </div>

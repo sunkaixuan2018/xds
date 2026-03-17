@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% set title = "选择池子并分析" %}
+
+{% block content %}
+  <div class="row justify-content-center">
+    <div class="col-lg-8">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <h5 class="card-title mb-2">选择要分析的池子</h5>
+          <p class="text-secondary mb-4">
+            当前文件：<strong>{{ file_name }}</strong>，共 <strong>{{ sheet_names|length }}</strong> 个池子（sheet）。请选择一个池子，系统将对该池子内的用户数据做异常检测。
+          </p>
+
+          <form action="{{ url_for('pool_analyze', upload_id=upload_id) }}" method="post">
+            <div class="mb-3">
+              <label class="form-label">池子（sheet 名）</label>
+              <select class="form-select form-select-lg" name="sheet_name" required>
+                <option value="">请选择一个池子</option>
+                {% for name in sheet_names %}
+                  <option value="{{ name }}">{{ name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <button class="btn btn-primary btn-lg w-100" type="submit">分析该池子用户异常</button>
+          </form>
+        </div>
+      </div>
+      <div class="mt-3 text-center">
+        <a href="{{ url_for('pool_index') }}" class="text-secondary">重新上传其他 Excel</a>
+        &nbsp;·&nbsp;
+        <a href="{{ url_for('index') }}" class="text-secondary">返回首页</a>
+      </div>
+    </div>
+  </div>
+{% endblock %}
