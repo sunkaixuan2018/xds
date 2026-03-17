@@ -183,9 +183,15 @@ def aggregate_by_pool_and_user(df: pd.DataFrame, metric: str = "rpm") -> None:
 
             # 行索引恢复为普通列
             pivot.reset_index(inplace=True)
+            # 第一列 domain_id 强制为字符串并写入，避免在 Excel 里被当数字导致读回时变成 0.0
+            pivot["domain_id"] = pivot["domain_id"].astype(str)
 
             sheet_name = str(pool)[:31] or "unknown_pool"
             pivot.to_excel(writer, sheet_name=sheet_name, index=False)
+            # 将首列设为 Excel 文本格式，避免被 Excel 自动转成数字
+            ws = writer.sheets[sheet_name]
+            for row in range(2, len(pivot) + 2):
+                ws.cell(row=row, column=1).number_format = "@"
             wrote_any = True
 
         if not wrote_any:

@@ -240,17 +240,11 @@ def create_app() -> Flask:
             flash("请选择一个有效的池子（sheet）。", "danger")
             return redirect(url_for("pool_select", upload_id=upload_id))
         try:
-            # 第一列（用户标识，如 domain_id）强制按字符串读，避免「用户360」等被读成数字导致显示 0.0
-            header_df = pd.read_excel(info["file_path"], sheet_name=sheet_name, nrows=0)
-            first_col_name = str(header_df.columns[0]) if len(header_df.columns) else None
-            df = pd.read_excel(
-                info["file_path"],
-                sheet_name=sheet_name,
-                dtype={first_col_name: str} if first_col_name else None,
-            )
+            # 整表先按字符串读，避免首列(用户ID)被 Excel/引擎推断为数字导致显示 0.0；时间列后续在 validate_and_prepare 里会转成数值
+            df = pd.read_excel(info["file_path"], sheet_name=sheet_name, dtype=str)
             df.columns = [str(c) for c in df.columns]
-            # 按列位置再强制一次：首列必须为字符串（兼容列名异常或 dtype 未生效）
-            df.iloc[:, 0] = df.iloc[:, 0].astype(str)
+            # 空单元格会读成 NaN 字符串或空，首列统一为字符串
+            df.iloc[:, 0] = df.iloc[:, 0].fillna("").astype(str)
             if df.shape[0] == 0 or df.shape[1] < 25:
                 raise ValueError("该 sheet 行数或列数不足（需要至少一列用户标识 + 24 列时间）。")
             df, h_cols = validate_and_prepare(df)

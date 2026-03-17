@@ -214,13 +214,11 @@ def validate_and_prepare(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
     else:
         # 3) 新格式：第一列为 user_id，其余为时间列（最后一列可选为总量列）
         out = df.copy()
-        out["user_id"] = out[first_col].astype(str)
-
+        # 先根据当前列确定时间列，再添加 user_id，避免 user_id 被算进 h_cols 后被 to_numeric 覆盖成 0
         candidate_cols = list(out.columns[1:])
         if not candidate_cols:
             raise ValueError("缺少时间序列列。请确保第一列为用户标识，后面至少有 24 列时间数据。")
 
-        # 检测最后一列是否为总量列（Total/sum，大小写不敏感）
         last_col = candidate_cols[-1]
         last_name = last_col.strip().lower()
         if last_name in {"total", "sum"}:
@@ -231,6 +229,7 @@ def validate_and_prepare(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
             total_col = None
 
         h_cols = time_cols
+        out["user_id"] = out[first_col].astype(str)
 
     if len(h_cols) < 24:
         raise ValueError("未找到足够的时间列（H0, H1, ... 或具体时间列）。至少需要 24 列。")
