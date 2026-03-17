@@ -275,7 +275,19 @@ def detect_anomalies(
     sys_level_anom = sys_rz >= cfg.sys_robust_z
 
     # Primary gate: ratio over seasonal median (filters out normal diurnal ramps)
-    med = _seasonal_median(S, period=cfg.seasonal_period, lookback=cfg.seasonal_lookback)
+    # NOTE:
+    # seasonal median requires >=2 historical same-hour points, so early hours can be NaN.
+    # To avoid missing single-hour extreme spikes early in the series, fall back to a rolling median
+    # on past points only (shifted by 1) when seasonal median is unavailable.
+    med_seasonal = _seasonal_median(S, period=cfg.seasonal_period, lookback=cfg.seasonal_lookback)
+    med_roll = (
+        pd.Series(S.astype(float))
+        .shift(1)
+        .rolling(window=cfg.baseline_window_hours, min_periods=cfg.min_baseline_points)
+        .median()
+        .to_numpy()
+    )
+    med = np.where(np.isfinite(med_seasonal) & (med_seasonal > 0), med_seasonal, med_roll)
     ratio = np.where(np.isfinite(med) & (med > 0), S / med, np.nan)
     sys_ratio_anom = ratio >= cfg.sys_ratio_threshold
 
@@ -303,11 +315,14 @@ def detect_anomalies(
             events = list(events) + extra_events
 
     # Keep only top-N strongest events (by system peak ratio)
+    # Important: preserve single-hour extreme events as much as possible.
     if events and cfg.max_events and len(events) > cfg.max_events:
         scored = []
         for (a, b) in events:
             peak = float(np.nanmax(ratio[a : b + 1]))
-            scored.append(((a, b), peak))
+            is_extreme_single = (a == b) and bool(np.isfinite(ratio[a])) and bool(ratio[a] >= cfg.sys_extreme_ratio)
+            # Add a tiny bonus so extreme single points are not accidentally dropped on ties.
+            scored.append(((a, b), peak + (1e-6 if is_extreme_single else 0.0)))
         scored.sort(key=lambda x: x[1], reverse=True)
         events = [w for (w, _) in scored[: cfg.max_events]]
         events.sort()
