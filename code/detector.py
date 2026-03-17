@@ -279,8 +279,12 @@ def detect_anomalies(
     ratio = np.where(np.isfinite(med) & (med > 0), S / med, np.nan)
     sys_ratio_anom = ratio >= cfg.sys_ratio_threshold
 
-    # System anomaly points: (ratio gate) AND (robust-z OR burst)
-    sys_anom = sys_ratio_anom & (sys_level_anom | sys_burst)
+    # System anomaly points:
+    # - normal: (ratio gate) AND (robust-z OR burst)
+    # - extreme spike: ratio >= sys_extreme_ratio (bypass robust-z/burst), so single-hour sharp deviation is not missed
+    sys_anom_normal = sys_ratio_anom & (sys_level_anom | sys_burst)
+    sys_anom_extreme = np.isfinite(ratio) & (ratio >= cfg.sys_extreme_ratio)
+    sys_anom = sys_anom_normal | sys_anom_extreme
     events = _mask_to_events(sys_anom, min_len=cfg.event_min_len, merge_gap=cfg.event_merge_gap)
 
     # 补充：对“单点极端偏离”的异常也认为是独立事件（即使不连续）
@@ -292,10 +296,8 @@ def detect_anomalies(
         for h in range(hours):
             if covered[h]:
                 continue
-            if not sys_anom[h]:
-                continue
-            # ratio 明显超过更高阈值（例如 30%+），视为单点事件
-            if np.isfinite(ratio[h]) and ratio[h] >= cfg.sys_extreme_ratio:
+            # ratio 明显超过更高阈值（例如 30%+），视为单点事件（即使未形成连续窗口）
+            if bool(sys_anom_extreme[h]):
                 extra_events.append((h, h))
         if extra_events:
             events = list(events) + extra_events
