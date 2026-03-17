@@ -388,7 +388,8 @@ def create_app() -> Flask:
             s["events"],
             ratio_threshold,
         )
-        system_fig_html = pio.to_html(system_fig, full_html=False, include_plotlyjs=False)
+        # 池子图在模板中排第一，必须带 plotlyjs 与渲染脚本，否则会空白
+        system_fig_html = pio.to_html(system_fig, full_html=False, include_plotlyjs="inline")
 
         # Lookup summary row
         row = next((r for r in s["records_json"] if r["user_id"] == user_id), None)
