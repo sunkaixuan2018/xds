@@ -101,6 +101,31 @@ def _get_int(form: Any, key: str, default: int) -> int:
     return int(float(v))
 
 
+def _detector_config_for_sensitivity(sensitivity: str) -> DetectorConfig:
+    """根据前端选择的高/中/低灵敏度返回对应检测配置。高=更多异常，低=更少异常。"""
+    sensitivity = (sensitivity or "medium").strip().lower()
+    if sensitivity == "high":
+        return DetectorConfig(
+            share_z=2.0,
+            growth_rate_threshold=0.5,
+            user_k=1.5,
+            abs_z_extreme=4.0,
+            abs_z_peak=3.0,
+            abs_z_episode=2.0,
+        )
+    if sensitivity == "low":
+        return DetectorConfig(
+            share_z=4.0,
+            growth_rate_threshold=1.2,
+            user_k=2.5,
+            abs_z_extreme=6.0,
+            abs_z_peak=4.0,
+            abs_z_episode=3.0,
+        )
+    # medium：使用默认
+    return DetectorConfig()
+
+
 
 
 
@@ -522,7 +547,9 @@ def create_app() -> Flask:
 
                 start_time = datetime(2026, 1, 1, 0, 0)
 
-            cfg = DetectorConfig()
+            sensitivity = request.form.get("sensitivity", "medium").strip() or "medium"
+
+            cfg = _detector_config_for_sensitivity(sensitivity)
 
             res = detect_anomalies(cfg, df, h_cols)
 
