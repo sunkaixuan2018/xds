@@ -39,6 +39,26 @@
               </div>
               <div class="form-text">高：检出更多异常；中：默认平衡；低：仅检出较明显异常。</div>
             </div>
+            <div class="mb-4">
+              <label class="form-label">检测池子异常灵敏度（影响系统上下界与单点尖峰）</label>
+              <div class="d-flex gap-2 flex-wrap">
+                <div class="form-check form-check-inline">
+                  <input class="form-check-input" type="radio" name="pool_sensitivity" id="pool-sens-high" value="high">
+                  <label class="form-check-label" for="pool-sens-high">高</label>
+                </div>
+                <div class="form-check form-check-inline">
+                  <input class="form-check-input" type="radio" name="pool_sensitivity" id="pool-sens-medium" value="medium" checked>
+                  <label class="form-check-label" for="pool-sens-medium">中</label>
+                </div>
+                <div class="form-check form-check-inline">
+                  <input class="form-check-input" type="radio" name="pool_sensitivity" id="pool-sens-low" value="low">
+                  <label class="form-check-label" for="pool-sens-low">低</label>
+                </div>
+              </div>
+              <div class="form-text">
+                高：ratio阈值 1.10，单点尖峰 1.50；中：1.25 / 1.70；低：1.40 / 1.90。
+              </div>
+            </div>
             <button class="btn btn-primary btn-lg w-100" type="submit">分析该池子用户异常</button>
           </form>
         </div>

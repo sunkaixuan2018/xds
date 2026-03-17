@@ -8,7 +8,7 @@ import os
 
 import uuid
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 
 from datetime import datetime, timezone, timedelta
 
@@ -124,6 +124,25 @@ def _detector_config_for_sensitivity(sensitivity: str) -> DetectorConfig:
         )
     # medium：使用默认
     return DetectorConfig()
+
+
+def _apply_pool_sensitivity(cfg: DetectorConfig, pool_sensitivity: str) -> DetectorConfig:
+    """
+    池子（系统）异常灵敏度：只影响系统层面的 ratio 带宽与单点极端尖峰阈值。
+
+    - ratio_threshold: 高/中/低 = 1.10 / 1.25 / 1.40
+    - sys_extreme_ratio: 高/中/低 = 1.50 / 1.70 / 1.90
+
+    说明：这里的“高”表示更敏感（更容易报异常）。
+    """
+    s = (pool_sensitivity or "medium").strip().lower()
+    mapping = {
+        "high": (1.10, 1.50),
+        "medium": (1.25, 1.70),
+        "low": (1.40, 1.90),
+    }
+    ratio_threshold, extreme_ratio = mapping.get(s, mapping["medium"])
+    return replace(cfg, sys_ratio_threshold=float(ratio_threshold), sys_extreme_ratio=float(extreme_ratio))
 
 
 
@@ -548,8 +567,10 @@ def create_app() -> Flask:
                 start_time = datetime(2026, 1, 1, 0, 0)
 
             sensitivity = request.form.get("sensitivity", "medium").strip() or "medium"
+            pool_sensitivity = request.form.get("pool_sensitivity", "medium").strip() or "medium"
 
             cfg = _detector_config_for_sensitivity(sensitivity)
+            cfg = _apply_pool_sensitivity(cfg, pool_sensitivity)
 
             res = detect_anomalies(cfg, df, h_cols)
 
