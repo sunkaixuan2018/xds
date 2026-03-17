@@ -376,6 +376,20 @@ def create_app() -> Flask:
         fig = build_user_figure(t, x, flags, sys_anom, sys_event_mask, growth, abs_z, share_z)
         user_fig_html = pio.to_html(fig, full_html=False, include_plotlyjs="inline")
 
+        # 池子/系统曲线（预测上下界 + 异常点），与结果页一致
+        ratio_threshold = float(s["cfg"].get("sys_ratio_threshold", 1.1))
+        system_fig = build_system_figure(
+            t,
+            s["S"],
+            s["system_median"],
+            s["system_ratio"],
+            s["sys_anom"],
+            s["sys_event_mask"],
+            s["events"],
+            ratio_threshold,
+        )
+        system_fig_html = pio.to_html(system_fig, full_html=False, include_plotlyjs=False)
+
         # Lookup summary row
         row = next((r for r in s["records_json"] if r["user_id"] == user_id), None)
 
@@ -386,6 +400,7 @@ def create_app() -> Flask:
             user_id=user_id,
             row=row,
             user_fig_html=user_fig_html,
+            system_fig_html=system_fig_html,
             cfg=s["cfg"],
         )
 

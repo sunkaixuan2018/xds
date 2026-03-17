@@ -15,6 +15,18 @@
     </div>
   </div>
 
+  <div class="card shadow-sm mb-3">
+    <div class="card-body">
+      <h6 class="mb-2">池子/系统曲线（预测上下界与异常点）</h6>
+      <div class="plotly-chart">
+        {{ system_fig_html|safe }}
+      </div>
+      <div class="text-secondary small mt-2">
+        上图：系统总量、季节中位数、阈值带与系统异常点；下图：S/中位数 ratio 与阈值线。事件窗口为黄色高亮。
+      </div>
+    </div>
+  </div>
+
   {% if row %}
     <div class="row g-3 mb-3">
       <div class="col-md-3">
