@@ -316,9 +316,11 @@ def main() -> int:
 
     cfg = Config(users=args.users, seed=args.seed, growth_rate_threshold=args.growth_threshold)
 
-    out_dir = Path(__file__).resolve().parent
-    xlsx_path = out_dir / cfg.output_xlsx
-    results_csv = out_dir / cfg.output_results_csv
+    base_dir = Path(__file__).resolve().parent
+    result_dir = base_dir / "result"
+    result_dir.mkdir(exist_ok=True)
+    xlsx_path = result_dir / cfg.output_xlsx
+    results_csv = result_dir / cfg.output_results_csv
 
     if args.regenerate or (not xlsx_path.exists()):
         df_fake, injected_anomaly_users = make_fake_data(cfg)

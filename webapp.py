@@ -559,6 +559,11 @@ def np_bool_matrix(x: Any) -> Any:
     return np.asarray(x, dtype=bool)
 
 
+# 用户详情页上下两图统一宽度与边距，便于时间轴对齐观察
+_CHART_WIDTH = 980
+_CHART_MARGIN = dict(l=52, r=32, t=60, b=44)
+
+
 def build_system_figure(
     t: list[datetime],
     S: Any,
@@ -661,8 +666,9 @@ def build_system_figure(
     fig.update_layout(
         title="系统总量与基线对比（事件窗口、异常点、阈值带）",
         template="plotly_white",
+        width=_CHART_WIDTH,
         height=600,
-        margin=dict(l=30, r=20, t=70, b=40),
+        margin=_CHART_MARGIN,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
     )
     return fig
@@ -721,8 +727,9 @@ def build_user_figure(
         xaxis_title="时间",
         yaxis_title="RPM",
         template="plotly_white",
+        width=_CHART_WIDTH,
         height=420,
-        margin=dict(l=30, r=20, t=50, b=40),
+        margin=_CHART_MARGIN,
     )
     return fig
 
