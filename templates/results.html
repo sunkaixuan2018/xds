@@ -10,7 +10,7 @@
       </div>
     </div>
     <div class="d-flex gap-2">
-      <a class="btn btn-outline-secondary" href="{{ url_for('index') }}">重新上传</a>
+      <a class="btn btn-outline-secondary" href="{{ url_for('pool_index') }}">重新上传</a>
       <a class="btn btn-outline-primary" href="{{ url_for('export', session_id=session_id) }}">导出 CSV</a>
       <a class="btn btn-outline-primary" href="{{ url_for('export', session_id=session_id, format='json') }}">导出 JSON</a>
     </div>
@@ -110,6 +110,54 @@
         </div>
       {% else %}
         <div class="text-secondary small">未检测到系统事件窗口（可尝试降低系统阈值或检查数据）。</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card shadow-sm mb-3">
+    <div class="card-body">
+      <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+        <h6 class="mb-0">池子内用户数据（共 {{ all_users|length }} 个用户，按异常命中数、峰值排序）</h6>
+      </div>
+      {% if all_users and all_users|length > 0 %}
+        <div class="table-responsive">
+          <table class="table table-sm align-middle">
+            <thead>
+              <tr class="text-secondary">
+                <th>用户</th>
+                <th class="text-end">异常命中</th>
+                <th class="text-end">均值 RPM</th>
+                <th class="text-end">P95</th>
+                <th class="text-end">峰值</th>
+                <th>原因标签</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for u in all_users %}
+                <tr class="{{ 'table-warning' if u.hit_count > 0 else '' }}">
+                  <td><code>{{ u.user_id }}</code></td>
+                  <td class="text-end">{{ u.hit_count }}</td>
+                  <td class="text-end">{{ "%.1f"|format(u.avg_rpm) }}</td>
+                  <td class="text-end">{{ "%.1f"|format(u.p95_rpm) }}</td>
+                  <td class="text-end">{{ "%.1f"|format(u.max_rpm) }}</td>
+                  <td>
+                    {% if u.reason %}
+                      <span class="badge {{ 'text-bg-danger' if u.reason=='overload_share_and_growth' else 'text-bg-warning' }}">{{ u.reason }}</span>
+                    {% else %}
+                      <span class="text-secondary">—</span>
+                    {% endif %}
+                  </td>
+                  <td class="text-end">
+                    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('user_detail', session_id=session_id, user_id=u.user_id) }}">详情</a>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class="text-secondary">暂无用户数据。</div>
       {% endif %}
     </div>
   </div>

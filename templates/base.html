@@ -15,7 +15,7 @@
           <span>多租户 RPM 异常检测</span>
         </a>
         <div class="navbar-nav ms-auto">
-          <a class="nav-link text-light" href="{{ url_for('pool_index') }}">按池子分析</a>
+          <a class="nav-link text-light" href="{{ url_for('index') }}">首页</a>
         </div>
         <div class="navbar-text text-secondary small">
           localhost 工具 · Flask + Plotly
@@ -40,7 +40,7 @@
     </main>
 
     <footer class="container pb-4 text-center text-secondary small">
-      建议数据格式：<code>user_id</code> + <code>H0..H167</code> + <code>Total</code>（可选）
+      上传 result 目录下池子汇总 Excel（每 sheet 一池子），选择池子后分析用户异常。
     </footer>
     <script src="{{ url_for('static', filename='bootstrap.bundle.min.js') }}"></script>
   </body>

@@ -61,13 +61,8 @@ def create_app() -> Flask:
 
     @app.get("/")
     def index():
-        default_start = datetime.now().astimezone().replace(minute=0, second=0, microsecond=0)  # local tz
-        default_start = default_start.replace(tzinfo=None)  # datetime-local expects naive
-        return render_template(
-            "index.html",
-            default_start=default_start.isoformat(timespec="minutes"),
-            defaults=asdict(DetectorConfig()),
-        )
+        """首页即按池子分析：上传 result Excel"""
+        return render_template("pool_upload.html")
 
     @app.post("/detect")
     def detect():
@@ -320,6 +315,25 @@ def create_app() -> Flask:
             s.get("events", []),
             float(s["cfg"].get("sys_ratio_threshold", 1.10)),
         )
+        # 池子内全部用户数据：user_id, avg_rpm, max_rpm, p95_rpm, hit_count, reason
+        user_ids = s["user_ids"]
+        X = np_array(s["X"])
+        flags = np_bool_matrix(s["flags"])
+        records_by_uid = {r["user_id"]: r for r in s.get("records_json", [])}
+        all_users = []
+        for i, uid in enumerate(user_ids):
+            x = X[i]
+            rec = records_by_uid.get(uid, {})
+            all_users.append({
+                "user_id": uid,
+                "avg_rpm": float(np.mean(x)),
+                "max_rpm": float(np.max(x)),
+                "p95_rpm": float(np.quantile(x, 0.95)),
+                "hit_count": int(flags[i].sum()),
+                "reason": rec.get("reason", ""),
+            })
+        all_users.sort(key=lambda u: (-u["hit_count"], -u["max_rpm"]))
+
         return render_template(
             "results.html",
             session_id=session_id,
@@ -330,6 +344,7 @@ def create_app() -> Flask:
             system_stats=s["system_stats"],
             records=s["records_json"][:200],
             event_reports=s.get("event_reports", []),
+            all_users=all_users,
             system_fig_html=pio.to_html(system_fig, full_html=False, include_plotlyjs="inline"),
         )
 
