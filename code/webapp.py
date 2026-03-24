@@ -1122,9 +1122,12 @@ def create_app() -> Flask:
                 t,
                 np_array(s.get("S_rpm", s["S"])),
                 np_array(s.get("S_tpm", s["S"])),
+                np_array(s.get("system_ratio_rpm", s["system_ratio"])),
+                np_array(s.get("system_ratio_tpm", s["system_ratio"])),
                 np_bool(s.get("sys_anom_rpm", s["sys_anom"])),
                 np_bool(s.get("sys_anom_tpm", s["sys_anom"])),
                 s.get("events", []),
+                ratio_threshold,
             )
             system_fig_html = pio.to_html(system_fig, full_html=False, include_plotlyjs="inline")
             system_fig_tpm_html = ""
@@ -1264,9 +1267,12 @@ def create_app() -> Flask:
                 t,
                 s.get("S_rpm", s["S"]),
                 s.get("S_tpm", s["S"]),
+                s.get("system_ratio_rpm", s["system_ratio"]),
+                s.get("system_ratio_tpm", s["system_ratio"]),
                 s.get("sys_anom_rpm", s["sys_anom"]),
                 s.get("sys_anom_tpm", s["sys_anom"]),
                 s.get("events", s["events"]),
+                ratio_threshold,
             )
             system_fig_html = pio.to_html(system_fig, full_html=False, include_plotlyjs="inline")
             system_fig_tpm_html = ""
@@ -1944,23 +1950,40 @@ def build_system_dual_figure(
     t: list[datetime],
     s_rpm: Any,
     s_tpm: Any,
+    ratio_rpm: Any,
+    ratio_tpm: Any,
     sys_anom_rpm: Any,
     sys_anom_tpm: Any,
     events: Any,
+    ratio_threshold: float,
 ) -> go.Figure:
-    fig = make_subplots(rows=1, cols=1, specs=[[{"secondary_y": True}]])
+    fig = make_subplots(
+        rows=2,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.08,
+        row_heights=[0.65, 0.35],
+        specs=[[{"secondary_y": True}], [{}]],
+        subplot_titles=("系统总量（RPM/TPM 双轴）", "ratio（RPM/TPM）"),
+    )
 
     s_rpm = np.asarray(s_rpm, dtype=float)
     s_tpm = np.asarray(s_tpm, dtype=float)
+    ratio_rpm = np.asarray(ratio_rpm, dtype=float)
+    ratio_tpm = np.asarray(ratio_tpm, dtype=float)
     anom_rpm = np.asarray(sys_anom_rpm, dtype=bool)
     anom_tpm = np.asarray(sys_anom_tpm, dtype=bool)
 
     fig.add_trace(
         go.Scatter(x=t, y=s_rpm, mode="lines", name="SystemRPM", line=dict(color="#0d6efd")),
+        row=1,
+        col=1,
         secondary_y=False,
     )
     fig.add_trace(
         go.Scatter(x=t, y=s_tpm, mode="lines", name="SystemTPM", line=dict(color="#20c997")),
+        row=1,
+        col=1,
         secondary_y=True,
     )
 
@@ -1974,6 +1997,8 @@ def build_system_dual_figure(
                 name="RPMAnomaly",
                 marker=dict(size=8, color="#dc3545", symbol="diamond"),
             ),
+            row=1,
+            col=1,
             secondary_y=False,
         )
 
@@ -1987,8 +2012,22 @@ def build_system_dual_figure(
                 name="TPMAnomaly",
                 marker=dict(size=7, color="#fd7e14", symbol="circle"),
             ),
+            row=1,
+            col=1,
             secondary_y=True,
         )
+
+    fig.add_trace(
+        go.Scatter(x=t, y=ratio_rpm, mode="lines", name="RatioRPM", line=dict(color="#0d6efd", dash="dash")),
+        row=2,
+        col=1,
+    )
+    fig.add_trace(
+        go.Scatter(x=t, y=ratio_tpm, mode="lines", name="RatioTPM", line=dict(color="#20c997", dash="dash")),
+        row=2,
+        col=1,
+    )
+    fig.add_hline(y=ratio_threshold, line_dash="dot", line_color="rgba(220,53,69,0.8)", row=2, col=1)
 
     if events:
         for (a, b) in events:
@@ -2003,30 +2042,45 @@ def build_system_dual_figure(
                 line_width=0,
                 annotation_text="EventWindow",
                 annotation_position="top left",
+                row=1,
+                col=1,
+            )
+            fig.add_vrect(
+                x0=t[a],
+                x1=t[b] + timedelta(hours=1),
+                fillcolor="rgba(255, 193, 7, 0.12)",
+                line_width=0,
+                row=2,
+                col=1,
             )
 
-    fig.update_yaxes(title_text="RPM", secondary_y=False)
-    fig.update_yaxes(title_text="TPM", secondary_y=True)
+    fig.update_yaxes(title_text="RPM", row=1, col=1, secondary_y=False)
+    fig.update_yaxes(title_text="TPM", row=1, col=1, secondary_y=True)
+    fig.update_yaxes(title_text="ratio", row=2, col=1)
     x_end = (t[-1] + timedelta(hours=1)) if t else None
     if t:
-        fig.update_xaxes(title_text="时间", range=[t[0], x_end])
+        fig.update_xaxes(title_text="时间", row=2, col=1, range=[t[0], x_end])
     else:
-        fig.update_xaxes(title_text="时间")
+        fig.update_xaxes(title_text="时间", row=2, col=1)
     # Keep dual charts aligned with user chart horizontally.
-    fig.update_xaxes(automargin=False)
-    fig.update_yaxes(automargin=False, secondary_y=False)
-    fig.update_yaxes(automargin=False, secondary_y=True)
+    fig.update_xaxes(automargin=False, row=1, col=1)
+    fig.update_xaxes(automargin=False, row=2, col=1)
+    fig.update_yaxes(automargin=False, row=1, col=1, secondary_y=False)
+    fig.update_yaxes(automargin=False, row=1, col=1, secondary_y=True)
+    fig.update_yaxes(automargin=False, row=2, col=1)
     fig.update_layout(
-        title="系统总量时序（RPM/TPM 双轴）",
+        title="系统总量与 ratio（RPM/TPM）",
         template="plotly_white",
         width=_CHART_WIDTH,
-        height=500,
+        height=640,
         margin=_CHART_MARGIN,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-        # Force identical plotting area for all dual-axis charts.
+        # Force identical plotting area for all dual-axis charts (main row).
         xaxis=dict(domain=_DUAL_X_DOMAIN),
         yaxis=dict(anchor="x", side="left", position=0.0),
         yaxis2=dict(anchor="x", overlaying="y", side="right", position=1.0),
+        # Row-2 x-axis domain aligned with row-1.
+        xaxis2=dict(domain=_DUAL_X_DOMAIN),
     )
     return fig
 
