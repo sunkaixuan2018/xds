@@ -258,6 +258,15 @@ def build_pool_sheet_groups(sheet_names: list[str]) -> list[dict[str, Any]]:
     return groups
 
 
+def _pool_upload_display_name(info: dict[str, Any]) -> str:
+    mode = str(info.get("upload_mode", "dual"))
+    if mode == "rpm_only":
+        return f"RPM={info.get('file_name_rpm', '')}"
+    if mode == "tpm_only":
+        return f"TPM={info.get('file_name_tpm', '')}"
+    return f"RPM={info.get('file_name_rpm', '')} ; TPM={info.get('file_name_tpm', '')}"
+
+
 
 
 
@@ -705,38 +714,45 @@ def create_app() -> Flask:
         f_rpm = request.files.get("file_rpm")
         f_tpm = request.files.get("file_tpm")
 
-        if not f_rpm or not f_rpm.filename or not f_tpm or not f_tpm.filename:
-
-            flash("请同时上传 RPM 与 TPM 两个聚合 Excel 文件。", "danger")
+        has_rpm = bool(f_rpm and f_rpm.filename)
+        has_tpm = bool(f_tpm and f_tpm.filename)
+        if (not has_rpm) and (not has_tpm):
+            flash("请至少上传一个聚合 Excel 文件（RPM 或 TPM）。", "danger")
 
             return redirect(url_for("pool_index"))
 
-        if not (f_rpm.filename.lower().endswith(".xlsx") or f_rpm.filename.lower().endswith(".xls")):
+        if has_rpm and not (f_rpm.filename.lower().endswith(".xlsx") or f_rpm.filename.lower().endswith(".xls")):
             flash("RPM 文件格式不正确，请上传 Excel（.xlsx / .xls）。", "danger")
             return redirect(url_for("pool_index"))
-        if not (f_tpm.filename.lower().endswith(".xlsx") or f_tpm.filename.lower().endswith(".xls")):
+        if has_tpm and not (f_tpm.filename.lower().endswith(".xlsx") or f_tpm.filename.lower().endswith(".xls")):
             flash("TPM 文件格式不正确，请上传 Excel（.xlsx / .xls）。", "danger")
             return redirect(url_for("pool_index"))
 
-        filename_rpm = secure_filename(f_rpm.filename)
-        filename_tpm = secure_filename(f_tpm.filename)
+        filename_rpm = secure_filename(f_rpm.filename) if has_rpm else ""
+        filename_tpm = secure_filename(f_tpm.filename) if has_tpm else ""
 
         upload_id = uuid.uuid4().hex
 
-        saved_path_rpm = UPLOAD_DIR / f"pool_{upload_id}__rpm__{filename_rpm}"
-        saved_path_tpm = UPLOAD_DIR / f"pool_{upload_id}__tpm__{filename_tpm}"
+        saved_path_rpm = (UPLOAD_DIR / f"pool_{upload_id}__rpm__{filename_rpm}") if has_rpm else None
+        saved_path_tpm = (UPLOAD_DIR / f"pool_{upload_id}__tpm__{filename_tpm}") if has_tpm else None
 
-        f_rpm.save(saved_path_rpm)
-        f_tpm.save(saved_path_tpm)
+        if has_rpm and saved_path_rpm is not None:
+            f_rpm.save(saved_path_rpm)
+        if has_tpm and saved_path_tpm is not None:
+            f_tpm.save(saved_path_tpm)
 
         try:
 
-            xl_rpm = pd.ExcelFile(saved_path_rpm)
-            xl_tpm = pd.ExcelFile(saved_path_tpm)
-            sheets_rpm = xl_rpm.sheet_names
-            sheets_tpm = xl_tpm.sheet_names
-            xl_rpm.close()
-            xl_tpm.close()
+            sheets_rpm: list[str] = []
+            sheets_tpm: list[str] = []
+            if has_rpm and saved_path_rpm is not None:
+                xl_rpm = pd.ExcelFile(saved_path_rpm)
+                sheets_rpm = xl_rpm.sheet_names
+                xl_rpm.close()
+            if has_tpm and saved_path_tpm is not None:
+                xl_tpm = pd.ExcelFile(saved_path_tpm)
+                sheets_tpm = xl_tpm.sheet_names
+                xl_tpm.close()
 
         except Exception as e:
 
@@ -744,17 +760,29 @@ def create_app() -> Flask:
 
             return redirect(url_for("pool_index"))
 
-        sheet_names = sorted(set(sheets_rpm).intersection(set(sheets_tpm)))
-        if not sheet_names:
+        if has_rpm and has_tpm:
+            sheet_names = sorted(set(sheets_rpm).intersection(set(sheets_tpm)))
+            upload_mode = "dual"
+            if not sheet_names:
+                flash("RPM 与 TPM 文件没有共同 sheet，无法联合分析。", "danger")
+                return redirect(url_for("pool_index"))
+        elif has_rpm:
+            sheet_names = sorted(sheets_rpm)
+            upload_mode = "rpm_only"
+        else:
+            sheet_names = sorted(sheets_tpm)
+            upload_mode = "tpm_only"
 
-            flash("RPM 与 TPM 文件没有共同 sheet，无法联合分析。", "danger")
+        if not sheet_names:
+            flash("上传文件没有可用 sheet。", "danger")
 
             return redirect(url_for("pool_index"))
 
         app.config["POOL_UPLOADS"][upload_id] = {
 
-            "file_path_rpm": str(saved_path_rpm),
-            "file_path_tpm": str(saved_path_tpm),
+            "file_path_rpm": str(saved_path_rpm) if saved_path_rpm is not None else "",
+            "file_path_tpm": str(saved_path_tpm) if saved_path_tpm is not None else "",
+            "upload_mode": upload_mode,
 
             "sheet_names": sheet_names,
 
@@ -785,7 +813,8 @@ def create_app() -> Flask:
 
             upload_id=upload_id,
 
-            file_name=f"RPM={info['file_name_rpm']} ; TPM={info['file_name_tpm']}",
+            file_name=_pool_upload_display_name(info),
+            upload_mode=str(info.get("upload_mode", "dual")),
 
             sheet_names=info["sheet_names"],
 
@@ -816,39 +845,54 @@ def create_app() -> Flask:
             return redirect(url_for("pool_select", upload_id=upload_id))
 
         try:
+            upload_mode = str(info.get("upload_mode", "dual"))
+            use_rpm = bool(info.get("file_path_rpm"))
+            use_tpm = bool(info.get("file_path_tpm"))
+            if not use_rpm and not use_tpm:
+                raise ValueError("上传文件信息缺失，请重新上传。")
+            if upload_mode == "dual" and (not use_rpm or not use_tpm):
+                raise ValueError("联合分析需要同时上传 RPM 与 TPM。")
 
             # 整表先按字符串读，避免首列(用户ID)被 Excel/引擎推断为数字导致显示 0.0；
             # 时间列后续在 validate_and_prepare 里会转成数值
-            df_rpm = pd.read_excel(info["file_path_rpm"], sheet_name=sheet_name, dtype=str)
-            df_tpm = pd.read_excel(info["file_path_tpm"], sheet_name=sheet_name, dtype=str)
+            df_rpm = None
+            df_tpm = None
+            h_cols_rpm: list[str] = []
+            h_cols_tpm: list[str] = []
+            if use_rpm:
+                df_rpm = pd.read_excel(info["file_path_rpm"], sheet_name=sheet_name, dtype=str)
+                df_rpm.columns = [str(c) for c in df_rpm.columns]
+                df_rpm.iloc[:, 0] = df_rpm.iloc[:, 0].fillna("").astype(str)
+                if df_rpm.shape[0] == 0 or df_rpm.shape[1] < 25:
+                    raise ValueError("RPM 该 sheet 行数或列数不足（至少一列用户标识 + 24 列时间）。")
+                df_rpm, h_cols_rpm = validate_and_prepare(df_rpm)
+            if use_tpm:
+                df_tpm = pd.read_excel(info["file_path_tpm"], sheet_name=sheet_name, dtype=str)
+                df_tpm.columns = [str(c) for c in df_tpm.columns]
+                df_tpm.iloc[:, 0] = df_tpm.iloc[:, 0].fillna("").astype(str)
+                if df_tpm.shape[0] == 0 or df_tpm.shape[1] < 25:
+                    raise ValueError("TPM 该 sheet 行数或列数不足（至少一列用户标识 + 24 列时间）。")
+                df_tpm, h_cols_tpm = validate_and_prepare(df_tpm)
 
-            df_rpm.columns = [str(c) for c in df_rpm.columns]
-            df_tpm.columns = [str(c) for c in df_tpm.columns]
-            df_rpm.iloc[:, 0] = df_rpm.iloc[:, 0].fillna("").astype(str)
-            df_tpm.iloc[:, 0] = df_tpm.iloc[:, 0].fillna("").astype(str)
-
-            if df_rpm.shape[0] == 0 or df_rpm.shape[1] < 25 or df_tpm.shape[0] == 0 or df_tpm.shape[1] < 25:
-                raise ValueError("RPM/TPM 该 sheet 行数或列数不足（至少一列用户标识 + 24 列时间）。")
-
-            df_rpm, h_cols_rpm = validate_and_prepare(df_rpm)
-            df_tpm, h_cols_tpm = validate_and_prepare(df_tpm)
-            if h_cols_rpm != h_cols_tpm:
-                raise ValueError("RPM 与 TPM 该 sheet 的时间列不一致。")
-            h_cols = h_cols_rpm
-
-            rpm_uid = df_rpm["user_id"].astype(str)
-            tpm_uid = df_tpm["user_id"].astype(str)
-            shared = [u for u in rpm_uid.tolist() if u in set(tpm_uid.tolist())]
-            if not shared:
-                raise ValueError("RPM 与 TPM 该 sheet 没有共同用户，无法联合分析。")
-            if len(shared) < len(rpm_uid) or len(shared) < len(tpm_uid):
-                flash(f"RPM/TPM 用户集合不完全一致，已按交集 {len(shared)} 个用户联合分析。", "warning")
-            df_rpm = df_rpm[df_rpm["user_id"].astype(str).isin(shared)].copy()
-            df_tpm = df_tpm[df_tpm["user_id"].astype(str).isin(shared)].copy()
-            df_rpm["__order"] = pd.Categorical(df_rpm["user_id"].astype(str), categories=shared, ordered=True)
-            df_tpm["__order"] = pd.Categorical(df_tpm["user_id"].astype(str), categories=shared, ordered=True)
-            df_rpm = df_rpm.sort_values("__order").drop(columns="__order").reset_index(drop=True)
-            df_tpm = df_tpm.sort_values("__order").drop(columns="__order").reset_index(drop=True)
+            if use_rpm and use_tpm:
+                if h_cols_rpm != h_cols_tpm:
+                    raise ValueError("RPM 与 TPM 该 sheet 的时间列不一致。")
+                h_cols = h_cols_rpm
+                rpm_uid = df_rpm["user_id"].astype(str)
+                tpm_uid = df_tpm["user_id"].astype(str)
+                shared = [u for u in rpm_uid.tolist() if u in set(tpm_uid.tolist())]
+                if not shared:
+                    raise ValueError("RPM 与 TPM 该 sheet 没有共同用户，无法联合分析。")
+                if len(shared) < len(rpm_uid) or len(shared) < len(tpm_uid):
+                    flash(f"RPM/TPM 用户集合不完全一致，已按交集 {len(shared)} 个用户联合分析。", "warning")
+                df_rpm = df_rpm[df_rpm["user_id"].astype(str).isin(shared)].copy()
+                df_tpm = df_tpm[df_tpm["user_id"].astype(str).isin(shared)].copy()
+                df_rpm["__order"] = pd.Categorical(df_rpm["user_id"].astype(str), categories=shared, ordered=True)
+                df_tpm["__order"] = pd.Categorical(df_tpm["user_id"].astype(str), categories=shared, ordered=True)
+                df_rpm = df_rpm.sort_values("__order").drop(columns="__order").reset_index(drop=True)
+                df_tpm = df_tpm.sort_values("__order").drop(columns="__order").reset_index(drop=True)
+            else:
+                h_cols = h_cols_rpm if use_rpm else h_cols_tpm
 
             # 起始时间从第一个时间列名解析，如 "2026-01-18 16:00"
 
@@ -880,8 +924,9 @@ def create_app() -> Flask:
                 except Exception:
                     cfg = replace(cfg, max_events=5)
 
-            res_rpm = detect_anomalies(cfg, df_rpm, h_cols)
-            res_tpm = detect_anomalies(cfg, df_tpm, h_cols)
+            res_rpm = detect_anomalies(cfg, df_rpm, h_cols) if use_rpm else None
+            res_tpm = detect_anomalies(cfg, df_tpm, h_cols) if use_tpm else None
+            base_res = res_rpm if use_rpm else res_tpm
 
             hours = len(h_cols)
 
@@ -891,23 +936,86 @@ def create_app() -> Flask:
 
                 t,
 
-                res_rpm["S"],
+                base_res["S"],
 
-                res_rpm["system_median"],
+                base_res["system_median"],
 
-                res_rpm["system_ratio"],
+                base_res["system_ratio"],
 
-                res_rpm["sys_anom"],
+                base_res["sys_anom"],
 
-                res_rpm["sys_event_mask"],
+                base_res["sys_event_mask"],
 
-                res_rpm["events"],
+                base_res["events"],
 
                 cfg.sys_ratio_threshold,
 
             )
 
             system_fig_html = pio.to_html(system_fig, full_html=False, include_plotlyjs="inline")
+
+            if not use_tpm:
+                session_id = uuid.uuid4().hex
+                app.config["SESSIONS"][session_id] = {
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "file_name": f"RPM={info['file_name_rpm']} (池子: {sheet_name})",
+                    "saved_path": info["file_path_rpm"],
+                    "saved_path_rpm": info["file_path_rpm"],
+                    "start_time": start_time.isoformat(timespec="minutes"),
+                    "cfg": asdict(cfg),
+                    "analysis_mode": "single",
+                    "metric_type": "rpm",
+                    "t": [dt.isoformat() for dt in t],
+                    "h_cols": h_cols,
+                    "S": res_rpm["S"].tolist(),
+                    "system_median": np.asarray(res_rpm["system_median"], dtype=float).tolist(),
+                    "system_ratio": np.asarray(res_rpm["system_ratio"], dtype=float).tolist(),
+                    "sys_anom": res_rpm["sys_anom"].astype(bool).tolist(),
+                    "sys_event_mask": res_rpm["sys_event_mask"].astype(bool).tolist(),
+                    "events": res_rpm["events"],
+                    "event_reports": res_rpm["event_reports"],
+                    "user_ids": res_rpm["user_ids"],
+                    "records_csv": res_rpm["records"].to_csv(index=False, encoding="utf-8"),
+                    "records_json": res_rpm["records"].to_dict(orient="records"),
+                    "system_stats": res_rpm["system_stats"],
+                    "X": res_rpm["X"].tolist(),
+                    "flags": np.asarray(res_rpm["flags"], dtype=bool).tolist(),
+                    "growth": res_rpm["growth"].tolist(),
+                    "abs_z": res_rpm["abs_z"].tolist(),
+                    "share_z": res_rpm["share_z"].tolist(),
+                }
+                return redirect(url_for("results", session_id=session_id))
+            if not use_rpm and use_tpm:
+                session_id = uuid.uuid4().hex
+                app.config["SESSIONS"][session_id] = {
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "file_name": f"TPM={info['file_name_tpm']} (池子: {sheet_name})",
+                    "saved_path": info["file_path_tpm"],
+                    "saved_path_tpm": info["file_path_tpm"],
+                    "start_time": start_time.isoformat(timespec="minutes"),
+                    "cfg": asdict(cfg),
+                    "analysis_mode": "single",
+                    "metric_type": "tpm",
+                    "t": [dt.isoformat() for dt in t],
+                    "h_cols": h_cols,
+                    "S": res_tpm["S"].tolist(),
+                    "system_median": np.asarray(res_tpm["system_median"], dtype=float).tolist(),
+                    "system_ratio": np.asarray(res_tpm["system_ratio"], dtype=float).tolist(),
+                    "sys_anom": res_tpm["sys_anom"].astype(bool).tolist(),
+                    "sys_event_mask": res_tpm["sys_event_mask"].astype(bool).tolist(),
+                    "events": res_tpm["events"],
+                    "event_reports": res_tpm["event_reports"],
+                    "user_ids": res_tpm["user_ids"],
+                    "records_csv": res_tpm["records"].to_csv(index=False, encoding="utf-8"),
+                    "records_json": res_tpm["records"].to_dict(orient="records"),
+                    "system_stats": res_tpm["system_stats"],
+                    "X": res_tpm["X"].tolist(),
+                    "flags": np.asarray(res_tpm["flags"], dtype=bool).tolist(),
+                    "growth": res_tpm["growth"].tolist(),
+                    "abs_z": res_tpm["abs_z"].tolist(),
+                    "share_z": res_tpm["share_z"].tolist(),
+                }
+                return redirect(url_for("results", session_id=session_id))
 
             # 联合事件：RPM/TPM 事件掩码并集
             mask_rpm = np.asarray(res_rpm["sys_event_mask"], dtype=bool)

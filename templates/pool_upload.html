@@ -8,23 +8,23 @@
         <div class="card-body">
           <h5 class="card-title mb-2">上传池子 RPM/TPM 汇总 Excel</h5>
           <p class="text-secondary mb-4">
-            请同时上传 <code>result</code> 目录下由 <code>code/aggregate_pool_hours.py</code> 生成的 RPM 与 TPM Excel（例如
-            <code>pool_hourly_summary_rpm.xlsx</code> 与 <code>pool_hourly_summary_tpm.xlsx</code>）。
-            两个文件应包含相同 sheet 名（池子 + service），系统会按共同 sheet 做联合分析。
+            支持上传 RPM、TPM 任意一个或同时上传两个文件（建议来自 <code>result</code> 目录，
+            由 <code>code/aggregate_pool_hours.py</code> 生成）。
+            若同时上传，会按共同 sheet 做联合分析；若只上传一个，则执行单通道识别。
           </p>
 
           <form action="{{ url_for('pool_upload') }}" method="post" enctype="multipart/form-data">
             <div class="mb-3">
               <label class="form-label">RPM Excel 文件</label>
-              <input class="form-control" type="file" name="file_rpm" accept=".xlsx,.xls" required>
+              <input class="form-control" type="file" name="file_rpm" accept=".xlsx,.xls">
               <div class="form-text">仅支持 <code>.xlsx</code> / <code>.xls</code>。</div>
             </div>
             <div class="mb-3">
               <label class="form-label">TPM Excel 文件</label>
-              <input class="form-control" type="file" name="file_tpm" accept=".xlsx,.xls" required>
-              <div class="form-text">需与 RPM 文件包含相同 sheet 名。</div>
+              <input class="form-control" type="file" name="file_tpm" accept=".xlsx,.xls">
+              <div class="form-text">可单独上传；若与 RPM 同传则需有共同 sheet 名。</div>
             </div>
-            <button class="btn btn-primary btn-lg w-100" type="submit">上传并识别共同池子</button>
+            <button class="btn btn-primary btn-lg w-100" type="submit">上传并开始分析</button>
           </form>
         </div>
       </div>
