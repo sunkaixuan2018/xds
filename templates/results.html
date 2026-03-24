@@ -92,6 +92,29 @@
   </div>
   {% endif %}
 
+  {% if is_dual %}
+  <div class="card shadow-sm mb-3">
+    <div class="card-body">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <h6 class="mb-0">系统总量时序（RPM）</h6>
+        <span class="badge text-bg-light">系统事件数={{ system_stats.event_count }} · 事件小时={{ system_stats.event_hours_count }}</span>
+      </div>
+      <div class="plotly-chart">
+        {{ system_fig_html|safe }}
+      </div>
+    </div>
+  </div>
+  <div class="card shadow-sm mb-3">
+    <div class="card-body">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <h6 class="mb-0">系统总量时序（TPM）</h6>
+      </div>
+      <div class="plotly-chart">
+        {{ system_fig_tpm_html|safe }}
+      </div>
+    </div>
+  </div>
+  {% else %}
   <div class="card shadow-sm mb-3">
     <div class="card-body">
       <div class="d-flex justify-content-between align-items-center mb-2">
@@ -103,6 +126,7 @@
       </div>
     </div>
   </div>
+  {% endif %}
 
   <div class="card shadow-sm mb-3">
     <div class="card-body">

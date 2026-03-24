@@ -1116,25 +1116,43 @@ def create_app() -> Flask:
 
         is_dual = str(s.get("analysis_mode", "")) == "dual"
 
-        system_fig = build_system_figure(
-
-            t,
-
-            np_array(s["S"]),
-
-            np_array(s["system_median"]),
-
-            np_array(s["system_ratio"]),
-
-            np_bool(s["sys_anom"]),
-
-            np_bool(s["sys_event_mask"]),
-
-            s.get("events", []),
-
-            float(s["cfg"].get("sys_ratio_threshold", 1.10)),
-
-        )
+        ratio_threshold = float(s["cfg"].get("sys_ratio_threshold", 1.10))
+        if is_dual:
+            system_fig_rpm = build_system_figure(
+                t,
+                np_array(s.get("S_rpm", s["S"])),
+                np_array(s.get("system_median_rpm", s["system_median"])),
+                np_array(s.get("system_ratio_rpm", s["system_ratio"])),
+                np_bool(s.get("sys_anom_rpm", s["sys_anom"])),
+                np_bool(s.get("sys_event_mask_rpm", s["sys_event_mask"])),
+                s.get("events_rpm", s.get("events", [])),
+                ratio_threshold,
+            )
+            system_fig_tpm = build_system_figure(
+                t,
+                np_array(s.get("S_tpm", s["S"])),
+                np_array(s.get("system_median_tpm", s["system_median"])),
+                np_array(s.get("system_ratio_tpm", s["system_ratio"])),
+                np_bool(s.get("sys_anom_tpm", s["sys_anom"])),
+                np_bool(s.get("sys_event_mask_tpm", s["sys_event_mask"])),
+                s.get("events_tpm", s.get("events", [])),
+                ratio_threshold,
+            )
+            system_fig_html = pio.to_html(system_fig_rpm, full_html=False, include_plotlyjs="inline")
+            system_fig_tpm_html = pio.to_html(system_fig_tpm, full_html=False, include_plotlyjs=False)
+        else:
+            system_fig = build_system_figure(
+                t,
+                np_array(s["S"]),
+                np_array(s["system_median"]),
+                np_array(s["system_ratio"]),
+                np_bool(s["sys_anom"]),
+                np_bool(s["sys_event_mask"]),
+                s.get("events", []),
+                ratio_threshold,
+            )
+            system_fig_html = pio.to_html(system_fig, full_html=False, include_plotlyjs="inline")
+            system_fig_tpm_html = ""
 
         all_users: list[dict[str, Any]] = []
         if is_dual:
@@ -1189,7 +1207,8 @@ def create_app() -> Flask:
 
             all_users=all_users,
 
-            system_fig_html=pio.to_html(system_fig, full_html=False, include_plotlyjs="inline"),
+            system_fig_html=system_fig_html,
+            system_fig_tpm_html=system_fig_tpm_html,
 
         )
 
@@ -1232,41 +1251,75 @@ def create_app() -> Flask:
         sys_anom = np_bool(s["sys_anom"])
         sys_event_mask = np_bool(s["sys_event_mask"])
 
-
-
-        fig = build_user_figure(t, x, flags, sys_anom, sys_event_mask, growth, abs_z, share_z)
-
-        user_fig_html = pio.to_html(fig, full_html=False, include_plotlyjs="inline")
+        if is_dual:
+            fig_rpm = build_user_figure(
+                t,
+                np_array(s.get("X_rpm", s["X"]))[idx],
+                np_bool_matrix(s.get("flags_rpm", s["flags"]))[idx],
+                np_bool(s.get("sys_anom_rpm", s["sys_anom"])),
+                np_bool(s.get("sys_event_mask_rpm", s["sys_event_mask"])),
+                np_array(s.get("growth_rpm", s["growth"]))[idx],
+                np_array(s.get("abs_z_rpm", s["abs_z"]))[idx],
+                np_array(s.get("share_z_rpm", s["share_z"]))[idx],
+            )
+            fig_tpm = build_user_figure(
+                t,
+                np_array(s.get("X_tpm", s["X"]))[idx],
+                np_bool_matrix(s.get("flags_tpm", s["flags"]))[idx],
+                np_bool(s.get("sys_anom_tpm", s["sys_anom"])),
+                np_bool(s.get("sys_event_mask_tpm", s["sys_event_mask"])),
+                np_array(s.get("growth_tpm", s["growth"]))[idx],
+                np_array(s.get("abs_z_tpm", s["abs_z"]))[idx],
+                np_array(s.get("share_z_tpm", s["share_z"]))[idx],
+            )
+            user_fig_html = pio.to_html(fig_rpm, full_html=False, include_plotlyjs="inline")
+            user_fig_tpm_html = pio.to_html(fig_tpm, full_html=False, include_plotlyjs=False)
+        else:
+            fig = build_user_figure(t, x, flags, sys_anom, sys_event_mask, growth, abs_z, share_z)
+            user_fig_html = pio.to_html(fig, full_html=False, include_plotlyjs="inline")
+            user_fig_tpm_html = ""
 
 
 
         # 池子/系统曲线（预测上下界 + 异常点），与结果页一致
 
         ratio_threshold = float(s["cfg"].get("sys_ratio_threshold", 1.1))
-
-        system_fig = build_system_figure(
-
-            t,
-
-            s["S"],
-
-            s["system_median"],
-
-            s["system_ratio"],
-
-            s["sys_anom"],
-
-            s["sys_event_mask"],
-
-            s["events"],
-
-            ratio_threshold,
-
-        )
-
-        # 池子图在模板中排第一，必须带 plotlyjs 与渲染脚本，否则会空白
-
-        system_fig_html = pio.to_html(system_fig, full_html=False, include_plotlyjs="inline")
+        if is_dual:
+            system_fig_rpm = build_system_figure(
+                t,
+                s.get("S_rpm", s["S"]),
+                s.get("system_median_rpm", s["system_median"]),
+                s.get("system_ratio_rpm", s["system_ratio"]),
+                s.get("sys_anom_rpm", s["sys_anom"]),
+                s.get("sys_event_mask_rpm", s["sys_event_mask"]),
+                s.get("events_rpm", s["events"]),
+                ratio_threshold,
+            )
+            system_fig_tpm = build_system_figure(
+                t,
+                s.get("S_tpm", s["S"]),
+                s.get("system_median_tpm", s["system_median"]),
+                s.get("system_ratio_tpm", s["system_ratio"]),
+                s.get("sys_anom_tpm", s["sys_anom"]),
+                s.get("sys_event_mask_tpm", s["sys_event_mask"]),
+                s.get("events_tpm", s["events"]),
+                ratio_threshold,
+            )
+            system_fig_html = pio.to_html(system_fig_rpm, full_html=False, include_plotlyjs="inline")
+            system_fig_tpm_html = pio.to_html(system_fig_tpm, full_html=False, include_plotlyjs=False)
+        else:
+            system_fig = build_system_figure(
+                t,
+                s["S"],
+                s["system_median"],
+                s["system_ratio"],
+                s["sys_anom"],
+                s["sys_event_mask"],
+                s["events"],
+                ratio_threshold,
+            )
+            system_fig_html = pio.to_html(system_fig, full_html=False, include_plotlyjs="inline")
+            system_fig_tpm_html = ""
 
 
 
@@ -1313,8 +1366,10 @@ def create_app() -> Flask:
             is_dual=is_dual,
 
             user_fig_html=user_fig_html,
+            user_fig_tpm_html=user_fig_tpm_html,
 
             system_fig_html=system_fig_html,
+            system_fig_tpm_html=system_fig_tpm_html,
 
             cfg=s["cfg"],
 
