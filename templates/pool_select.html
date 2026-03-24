@@ -65,6 +65,26 @@
                 高：ratio阈值 1.10，单点尖峰 1.50；中：1.25 / 1.70；低：1.40 / 1.90。
               </div>
             </div>
+            <div class="mb-4">
+              <label class="form-label">大体量用户识别敏感度</label>
+              <div class="d-flex gap-2 flex-wrap">
+                <div class="form-check form-check-inline">
+                  <input class="form-check-input" type="radio" name="major_tenant_sensitivity" id="major-tenant-high" value="high">
+                  <label class="form-check-label" for="major-tenant-high">高</label>
+                </div>
+                <div class="form-check form-check-inline">
+                  <input class="form-check-input" type="radio" name="major_tenant_sensitivity" id="major-tenant-medium" value="medium" checked>
+                  <label class="form-check-label" for="major-tenant-medium">中</label>
+                </div>
+                <div class="form-check form-check-inline">
+                  <input class="form-check-input" type="radio" name="major_tenant_sensitivity" id="major-tenant-low" value="low">
+                  <label class="form-check-label" for="major-tenant-low">低</label>
+                </div>
+              </div>
+              <div class="form-text">
+                仅影响大体量用户识别阈值：高=更容易识别，低=更保守；用于补充“贡献高但份额突变不明显”的用户判定。
+              </div>
+            </div>
             <button class="btn btn-primary btn-lg w-100" type="submit">分析该池子用户异常</button>
           </form>
         </div>

@@ -33,6 +33,9 @@ class DetectorConfig:
     seasonal_period: int = 24
     seasonal_lookback: int = 6  # days to look back for same hour-of-day baseline
     max_events: int = 2
+    # Soft cap: when capping events, also keep near-tie events whose peak ratio
+    # is close to the N-th event peak. Helps preserve more valid segments.
+    max_events_keep_tie_ratio: float = 0.85
 
     # Tenant share anomaly during overload
     share_z: float = 3.0
@@ -332,14 +335,19 @@ def detect_anomalies(
             else:
                 normal_events.append((a, b))
 
-        # Cap only normal events by their peak ratio
+        # Cap normal events by their peak ratio, but keep "near ties"
+        # to avoid over-dropping later but still strong segments.
         if len(normal_events) > cfg.max_events:
             scored = []
             for (a, b) in normal_events:
                 peak = float(np.nanmax(ratio[a : b + 1]))
                 scored.append(((a, b), peak))
             scored.sort(key=lambda x: x[1], reverse=True)
-            normal_events = [w for (w, _) in scored[: cfg.max_events]]
+            top = scored[: cfg.max_events]
+            cutoff_peak = float(top[-1][1]) if top else float("inf")
+            keep_tie_ratio = float(max(min(cfg.max_events_keep_tie_ratio, 1.0), 0.0))
+            keep_floor = cutoff_peak * keep_tie_ratio
+            normal_events = [w for (w, p) in scored if p >= keep_floor]
 
         # Always keep all extreme single-hour events
         events = sorted(set(normal_events + extreme_single_events))
@@ -398,7 +406,15 @@ def detect_anomalies(
     sys_anom_mask = (sys_event_mask if cfg.strict_rootcause else sys_anom)[np.newaxis, :]
     abs_extreme = abs_z > cfg.abs_z_extreme
 
-    flags_overload = sys_anom_mask & ((share_anom & (growth_burst | share_extreme)) | abs_extreme)
+    # In overload/event windows, allow either:
+    # - share anomaly with burst/extreme, or
+    # - absolute extreme, or
+    # - strong absolute elevation (helps catch dominant tenants with stable share).
+    flags_overload = sys_anom_mask & (
+        (share_anom & (growth_burst | share_extreme))
+        | abs_extreme
+        | (abs_anom & (abs_z > cfg.abs_z_peak))
+    )
     # Outside system anomaly: allow sharp peaks even if growth isn't large
     if cfg.strict_rootcause:
         flags_normal = np.zeros_like(flags_overload, dtype=bool)

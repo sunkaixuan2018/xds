@@ -145,6 +145,30 @@ def _apply_pool_sensitivity(cfg: DetectorConfig, pool_sensitivity: str) -> Detec
     return replace(cfg, sys_ratio_threshold=float(ratio_threshold), sys_extreme_ratio=float(extreme_ratio))
 
 
+def _apply_major_tenant_sensitivity(cfg: DetectorConfig, tenant_sensitivity: str) -> DetectorConfig:
+    """
+    大体量用户识别敏感度：
+    仅影响用户侧“绝对量显著偏高”相关门槛，避免系统事件内漏掉高贡献用户。
+
+    - high: 更容易识别（阈值更低）
+    - medium: 默认平衡
+    - low: 更保守（阈值更高）
+    """
+    s = (tenant_sensitivity or "medium").strip().lower()
+    mapping = {
+        "high": (3.0, 1.6, 4.5),   # abs_z_peak, user_k, abs_z_extreme
+        "medium": (3.5, 2.0, 5.0),
+        "low": (4.0, 2.4, 5.8),
+    }
+    abs_z_peak, user_k, abs_z_extreme = mapping.get(s, mapping["medium"])
+    return replace(
+        cfg,
+        abs_z_peak=float(abs_z_peak),
+        user_k=float(user_k),
+        abs_z_extreme=float(abs_z_extreme),
+    )
+
+
 # 与 aggregate_pool_hours 约定：sheet 名形如 pool_key__service_tag，全部合计为 __ALL（或 ALL / 全部）
 POOL_SHEET_SEP = "__"
 POOL_ALL_MARKERS = frozenset({"ALL", "全部", "_ALL_"})
@@ -612,9 +636,11 @@ def create_app() -> Flask:
 
             sensitivity = request.form.get("sensitivity", "medium").strip() or "medium"
             pool_sensitivity = request.form.get("pool_sensitivity", "medium").strip() or "medium"
+            major_tenant_sensitivity = request.form.get("major_tenant_sensitivity", "medium").strip() or "medium"
 
             cfg = _detector_config_for_sensitivity(sensitivity)
             cfg = _apply_pool_sensitivity(cfg, pool_sensitivity)
+            cfg = _apply_major_tenant_sensitivity(cfg, major_tenant_sensitivity)
 
             res = detect_anomalies(cfg, df, h_cols)
 
