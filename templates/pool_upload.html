@@ -8,14 +8,16 @@
         <div class="card-body">
           <h5 class="card-title mb-2">上传池子汇总 Excel</h5>
           <p class="text-secondary mb-4">
-            请上传 <code>result</code> 目录下由聚合脚本生成的 Excel 文件（如 <code>pool_hourly_summary.xlsx</code>）。每个 sheet 对应一个池子，上传后将识别所有池子供您选择并分析该池子下的用户异常。
+            请上传 <code>result</code> 目录下由 <code>code/aggregate_pool_hours.py</code> 生成的 Excel，例如
+            <code>pool_hourly_summary_rpm.xlsx</code> 或 <code>pool_hourly_summary_tpm.xlsx</code>（<code>--metrics both</code> 会各生成一份）。
+            每个 sheet 对应「池子 + service」或「全部合计」，上传后按池子分组供选择并分析用户异常。
           </p>
 
           <form action="{{ url_for('pool_upload') }}" method="post" enctype="multipart/form-data">
             <div class="mb-3">
               <label class="form-label">Excel 文件</label>
               <input class="form-control" type="file" name="file" accept=".xlsx,.xls" required>
-              <div class="form-text">仅支持 <code>.xlsx</code> / <code>.xls</code>，且需包含多个 sheet（每个 sheet 为一个池子）。</div>
+              <div class="form-text">仅支持 <code>.xlsx</code> / <code>.xls</code>。可包含多个 sheet（每表为某池子下某 service 或全部合计）。</div>
             </div>
             <button class="btn btn-primary btn-lg w-100" type="submit">上传并识别池子</button>
           </form>

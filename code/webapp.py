@@ -145,6 +145,48 @@ def _apply_pool_sensitivity(cfg: DetectorConfig, pool_sensitivity: str) -> Detec
     return replace(cfg, sys_ratio_threshold=float(ratio_threshold), sys_extreme_ratio=float(extreme_ratio))
 
 
+# 与 aggregate_pool_hours 约定：sheet 名形如 pool_key__service_tag，全部合计为 __ALL（或 ALL / 全部）
+POOL_SHEET_SEP = "__"
+POOL_ALL_MARKERS = frozenset({"ALL", "全部", "_ALL_"})
+
+
+def parse_pool_sheet_name(sheet_name: str) -> tuple[str, str, bool]:
+    """解析池子 Excel 的 sheet 名：返回 (池子键, 服务片段, 是否为全部合计)。"""
+    s = str(sheet_name).strip()
+    if POOL_SHEET_SEP not in s:
+        return s, "", True
+    a, b = s.split(POOL_SHEET_SEP, 1)
+    a, b = a.strip(), b.strip()
+    is_all = b in POOL_ALL_MARKERS or b == ""
+    return a, b, is_all
+
+
+def build_pool_sheet_groups(sheet_names: list[str]) -> list[dict[str, Any]]:
+    """供模板 optgroup 使用：每个池子一组，组内为各 service（或全部合计）。"""
+    from collections import defaultdict
+
+    buckets: dict[str, list[str]] = defaultdict(list)
+    for sn in sheet_names:
+        pk, _, _ = parse_pool_sheet_name(sn)
+        buckets[pk].append(sn)
+
+    groups: list[dict[str, Any]] = []
+    for pool_key in sorted(buckets.keys()):
+        options: list[dict[str, str]] = []
+        for sn in sorted(buckets[pool_key]):
+            _, svc, is_all = parse_pool_sheet_name(sn)
+            if is_all:
+                label = "全部合计"
+            elif svc:
+                label = svc
+            else:
+                label = "全部合计"
+            options.append({"sheet_name": sn, "label": label})
+        options.sort(key=lambda o: (0 if o["label"] == "全部合计" else 1, o["label"]))
+        groups.append({"pool_key": pool_key, "options": options})
+    return groups
+
+
 
 
 
@@ -511,6 +553,8 @@ def create_app() -> Flask:
             file_name=info["file_name"],
 
             sheet_names=info["sheet_names"],
+
+            sheet_groups=build_pool_sheet_groups(info["sheet_names"]),
 
         )
 

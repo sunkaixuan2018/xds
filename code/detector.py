@@ -406,12 +406,41 @@ def detect_anomalies(
         flags_normal = (~sys_anom_mask) & ((abs_anom & (growth_burst | (abs_z > cfg.abs_z_peak))) | abs_extreme)
     flags = flags_overload | flags_normal
 
-    # Culprit localization by excess contribution inside each event window
+    # Post-process: backfill peak within an anomalous episode.
+    # Rationale: the sharpest peak may occur after the steepest growth hour.
+    for i in range(X.shape[0]):
+        episode_mask = abs_anom[i, :] | (abs_z[i, :] > cfg.abs_z_episode)
+        if not episode_mask.any():
+            continue
+        idx = np.where(episode_mask)[0]
+        # build segments of consecutive indices
+        seg_start = int(idx[0])
+        prev = int(idx[0])
+        segments = []
+        for h in idx[1:]:
+            h = int(h)
+            if h == prev + 1:
+                prev = h
+                continue
+            segments.append((seg_start, prev))
+            seg_start = prev = h
+        segments.append((seg_start, prev))
+
+        for a, b in segments:
+            if not flags[i, a : b + 1].any():
+                continue
+            # mark the peak hour inside this episode
+            local = X[i, a : b + 1]
+            peak_h = a + int(np.argmax(local))
+            flags[i, peak_h] = True
+
+    # Culprit localization by excess contribution inside each event window（仅从未被判定为正常的用户中识别：事件窗口内至少有一个异常点）
     event_reports: list[dict[str, Any]] = []
     for (a, b) in events:
-        # Excess defined vs baseline mean (non-negative)
         excess = np.clip(X[:, a : b + 1] - mu_abs[:, a : b + 1], 0, None)
         excess_sum_user = excess.sum(axis=1)
+        anom_in_window = np.array([bool(flags[i, a : b + 1].any()) for i in range(X.shape[0])], dtype=bool)
+        excess_sum_user = np.where(anom_in_window, excess_sum_user, 0.0)
         total_excess = float(excess_sum_user.sum())
         if total_excess <= 0:
             continue
@@ -424,7 +453,6 @@ def detect_anomalies(
             if val <= 0:
                 break
             if (val / total_excess) < cfg.culprit_min_ratio and selected:
-                # avoid adding tiny contributors after the main culprit
                 break
             selected.append((idx, val))
             cum += val
@@ -458,34 +486,6 @@ def detect_anomalies(
                 "culprits": culprits,
             }
         )
-
-    # Post-process: backfill peak within an anomalous episode.
-    # Rationale: the sharpest peak may occur after the steepest growth hour.
-    for i in range(X.shape[0]):
-        episode_mask = abs_anom[i, :] | (abs_z[i, :] > cfg.abs_z_episode)
-        if not episode_mask.any():
-            continue
-        idx = np.where(episode_mask)[0]
-        # build segments of consecutive indices
-        seg_start = int(idx[0])
-        prev = int(idx[0])
-        segments = []
-        for h in idx[1:]:
-            h = int(h)
-            if h == prev + 1:
-                prev = h
-                continue
-            segments.append((seg_start, prev))
-            seg_start = prev = h
-        segments.append((seg_start, prev))
-
-        for a, b in segments:
-            if not flags[i, a : b + 1].any():
-                continue
-            # mark the peak hour inside this episode
-            local = X[i, a : b + 1]
-            peak_h = a + int(np.argmax(local))
-            flags[i, peak_h] = True
 
     # System stats
     system_stats = {

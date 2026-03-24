@@ -1,14 +1,24 @@
 from __future__ import annotations
 
+import argparse
+import re
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = BASE_DIR / "data"
 RESULT_DIR = BASE_DIR / "result"
+
+DEFAULT_OUTPUT_RPM = "pool_hourly_summary_rpm.xlsx"
+DEFAULT_OUTPUT_TPM = "pool_hourly_summary_tpm.xlsx"
+# 兼容旧版单文件名
+LEGACY_OUTPUT = "pool_hourly_summary.xlsx"
+
+# 与网页约定：sheet = {pool_key}__{service_tag}，全部合计用 ALL
+SHEET_SEP = "__"
+ALL_TAG = "ALL"
 
 
 def load_all_csv() -> pd.DataFrame:
@@ -117,10 +127,73 @@ def hour_label(dt: pd.Timestamp) -> str:
     return dt.strftime("%Y-%m-%d %H:%M")
 
 
-def aggregate_by_pool_and_user(df: pd.DataFrame, metric: str = "rpm") -> None:
+def normalize_pool(x: str) -> str:
+    if not isinstance(x, str):
+        x = str(x)
+    parts = x.split("-")
+    if len(parts) >= 4:
+        return "-".join(parts[:4])
+    return x
+
+
+_INVALID_SHEET_CHARS = re.compile(r"[\[\]\:\*\?\/\\]")
+
+
+def sanitize_excel_sheet_name(name: str, max_len: int = 31) -> str:
+    s = _INVALID_SHEET_CHARS.sub("_", str(name).strip())
+    s = s.strip("'") or "sheet"
+    return s[:max_len]
+
+
+def build_sheet_name(pool_key: str, service_tag: str, used: set[str]) -> str:
+    """生成唯一、符合 Excel 限制的 sheet 名：pool__service。"""
+    base_pool = sanitize_excel_sheet_name(pool_key, 24)
+    base_svc = sanitize_excel_sheet_name(service_tag, 24)
+    raw = f"{base_pool}{SHEET_SEP}{base_svc}"
+    name = sanitize_excel_sheet_name(raw, 31)
+    if name not in used:
+        used.add(name)
+        return name
+    for i in range(2, 1000):
+        suffix = f"_{i}"
+        cand = sanitize_excel_sheet_name(raw[: 31 - len(suffix)] + suffix, 31)
+        if cand not in used:
+            used.add(cand)
+            return cand
+    raise RuntimeError("无法生成唯一 sheet 名")
+
+
+def _pivot_pool_users(
+    g: pd.DataFrame,
+    hour_index: pd.DatetimeIndex,
+    metric: str,
+) -> pd.DataFrame:
+    grouped = (
+        g.groupby(["__pool_group", "domain_id", "collect_hour"])[metric]
+        .sum()
+        .reset_index()
+    )
+    pivot = grouped.pivot_table(
+        index="domain_id",
+        columns="collect_hour",
+        values=metric,
+        aggfunc="sum",
+        fill_value=0.0,
+    )
+    pivot = pivot.reindex(columns=hour_index, fill_value=0.0)
+    pivot.columns = [hour_label(c) for c in pivot.columns]
+    pivot.reset_index(inplace=True)
+    pivot["domain_id"] = pivot["domain_id"].astype(str)
+    return pivot
+
+
+def aggregate_by_pool_and_user(
+    df: pd.DataFrame,
+    metric: str = "rpm",
+    output_path: Path | None = None,
+) -> Path:
     ensure_dirs()
 
-    # 以 infer_service_id 作为“池子”标识
     if "infer_service_id" not in df.columns:
         raise ValueError("缺少列 infer_service_id，无法按池子拆分。")
 
@@ -130,26 +203,25 @@ def aggregate_by_pool_and_user(df: pd.DataFrame, metric: str = "rpm") -> None:
     if metric not in df.columns:
         raise ValueError(f"缺少待聚合指标列：{metric}")
 
+    if output_path is None:
+        output_path = RESULT_DIR / (DEFAULT_OUTPUT_RPM if metric == "rpm" else DEFAULT_OUTPUT_TPM)
+
     df = df.copy()
     df[metric] = pd.to_numeric(df[metric], errors="coerce").fillna(0.0)
 
-    # 归一化池子 ID：a-b-c-d-e 只看前四段 a-b-c-d，e 部分允许有轻微变化
-    def normalize_pool(x: str) -> str:
-        if not isinstance(x, str):
-            x = str(x)
-        parts = x.split("-")
-        if len(parts) >= 4:
-            return "-".join(parts[:4])
-        return x
+    if "service_name" in df.columns:
+        df["__service_name"] = df["service_name"].fillna("").astype(str).str.strip()
+        df.loc[df["__service_name"] == "", "__service_name"] = "_default"
+    else:
+        df["__service_name"] = "_default"
+        print("[warn] 缺少列 service_name，将全部归为 _default，并仅生成与「全部」等价的单分面。")
 
     df["__pool_group"] = df["infer_service_id"].astype(str).map(normalize_pool)
 
-    writer_path = RESULT_DIR / "pool_hourly_summary.xlsx"
+    used_sheet_names: set[str] = set()
+    wrote_any = False
 
-    with pd.ExcelWriter(writer_path, engine="openpyxl") as writer:
-        wrote_any = False
-        # 每个归一化后的池子 ID（前四段）一个 sheet
-        # 先按用户数(domain_id 去重)降序排序，让用户多的池子排在前面
+    with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
         grouped_pools: list[tuple[str, pd.DataFrame, int]] = []
         for pool, g in df.groupby("__pool_group"):
             g2 = g[g["collect_hour"].notna()]
@@ -161,58 +233,77 @@ def aggregate_by_pool_and_user(df: pd.DataFrame, metric: str = "rpm") -> None:
         grouped_pools.sort(key=lambda x: x[2], reverse=True)
 
         for pool, g, user_cnt in grouped_pools:
-            # 只保留有合法 collect_hour 的数据
             print(f"[pool] 处理池子: {pool}，行数: {len(g)}，用户数(domain_id): {user_cnt}")
 
             hour_index = build_hour_range(g["collect_hour"])
+            services = sorted(g["__service_name"].dropna().unique().tolist())
 
-            # groupby(pool_id, domain_id, hour) 求和
-            grouped = (
-                g.groupby(["__pool_group", "domain_id", "collect_hour"])[metric]
-                .sum()
-                .reset_index()
-            )
+            # 1) 各 service_name 分面
+            for svc in services:
+                g_svc = g[g["__service_name"] == svc]
+                if g_svc.empty:
+                    continue
+                pivot = _pivot_pool_users(g_svc, hour_index, metric)
+                sheet = build_sheet_name(pool, svc, used_sheet_names)
+                pivot.to_excel(writer, sheet_name=sheet, index=False)
+                ws = writer.sheets[sheet]
+                for row in range(2, len(pivot) + 2):
+                    ws.cell(row=row, column=1).number_format = "@"
+                wrote_any = True
+                print(f"       [sheet] {sheet}（service={svc}），行数: {len(pivot)}")
 
-            # 透视成：每行一个用户，每列一个小时
-            pivot = grouped.pivot_table(
-                index="domain_id",
-                columns="collect_hour",
-                values=metric,
-                aggfunc="sum",
-                fill_value=0.0,
-            )
-
-            # 补全全量小时范围，缺的填 0
-            pivot = pivot.reindex(columns=hour_index, fill_value=0.0)
-
-            # 将列名转成指定字符串格式
-            pivot.columns = [hour_label(c) for c in pivot.columns]
-
-            # 行索引恢复为普通列
-            pivot.reset_index(inplace=True)
-            # 第一列 domain_id 强制为字符串并写入，避免在 Excel 里被当数字导致读回时变成 0.0
-            pivot["domain_id"] = pivot["domain_id"].astype(str)
-
-            sheet_name = str(pool)[:31] or "unknown_pool"
-            pivot.to_excel(writer, sheet_name=sheet_name, index=False)
-            # 将首列设为 Excel 文本格式，避免被 Excel 自动转成数字
-            ws = writer.sheets[sheet_name]
-            for row in range(2, len(pivot) + 2):
-                ws.cell(row=row, column=1).number_format = "@"
-            wrote_any = True
+            # 2) 多个 service 时额外写「全部」合计（同用户同小时跨 service 求和）；仅 1 个 service 时不重复写与分面相同的数据
+            if len(services) > 1:
+                pivot_all = _pivot_pool_users(g, hour_index, metric)
+                sheet_all = build_sheet_name(pool, ALL_TAG, used_sheet_names)
+                pivot_all.to_excel(writer, sheet_name=sheet_all, index=False)
+                ws = writer.sheets[sheet_all]
+                for row in range(2, len(pivot_all) + 2):
+                    ws.cell(row=row, column=1).number_format = "@"
+                wrote_any = True
+                print(f"       [sheet] {sheet_all}（全部 service 合计），行数: {len(pivot_all)}")
 
         if not wrote_any:
-            # 至少写一个空的占位 sheet，避免 openpyxl 报错
             empty = pd.DataFrame({"info": ["no data"]})
             empty.to_excel(writer, sheet_name="empty", index=False)
 
+    print(f"[ok] 已写入: {output_path}")
+    return output_path
+
 
 def main() -> None:
+    ap = argparse.ArgumentParser(description="按池子、用户、service_name 聚合小时级 rpm/tpm，输出到 result/。")
+    ap.add_argument(
+        "--metrics",
+        choices=("rpm", "tpm", "both"),
+        default="rpm",
+        help="输出指标：rpm、tpm 或两者各一个 xlsx（默认 rpm）。",
+    )
+    ap.add_argument(
+        "--legacy-name",
+        action="store_true",
+        help=f"在仅生成 rpm 时额外写一份兼容旧名 {LEGACY_OUTPUT}。",
+    )
+    args = ap.parse_args()
+
     df = load_all_csv()
     df = parse_collect_time_std(df)
-    aggregate_by_pool_and_user(df, metric="rpm")
+
+    metrics: list[str]
+    if args.metrics == "both":
+        metrics = ["rpm", "tpm"]
+    else:
+        metrics = [args.metrics]
+
+    for m in metrics:
+        out = RESULT_DIR / (DEFAULT_OUTPUT_RPM if m == "rpm" else DEFAULT_OUTPUT_TPM)
+        aggregate_by_pool_and_user(df, metric=m, output_path=out)
+
+    if args.legacy_name and "rpm" in metrics:
+        legacy = RESULT_DIR / LEGACY_OUTPUT
+        aggregate_by_pool_and_user(df, metric="rpm", output_path=legacy)
+        print(f"[ok] 兼容副本: {legacy}")
 
 
 if __name__ == "__main__":
     main()
-
