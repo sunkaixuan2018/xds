@@ -812,7 +812,7 @@ def create_app() -> Flask:
 
         all_users.sort(key=lambda u: (-u["hit_count"], -u["max_rpm"]))
 
-
+        event_reports_view = _format_event_reports_with_time(s.get("event_reports", []), t)
 
         return render_template(
 
@@ -832,7 +832,7 @@ def create_app() -> Flask:
 
             records=s["records_json"][:200],
 
-            event_reports=s.get("event_reports", []),
+            event_reports=event_reports_view,
 
             all_users=all_users,
 
@@ -992,6 +992,8 @@ def create_app() -> Flask:
 
         end_dt = (t[b] + timedelta(hours=1)).isoformat(timespec="minutes") if 0 <= b < len(t) else ""
 
+        event_view = _format_event_reports_with_time([ev], t)[0]
+
 
 
         return render_template(
@@ -1004,7 +1006,7 @@ def create_app() -> Flask:
 
             event_idx=event_idx,
 
-            ev=ev,
+            ev=event_view,
 
             start_dt=start_dt,
 
@@ -1255,6 +1257,48 @@ def np_bool_matrix(x: Any) -> Any:
     return np.asarray(x, dtype=bool)
 
 
+
+
+
+def _format_event_reports_with_time(event_reports: list[dict[str, Any]], t: list[datetime]) -> list[dict[str, Any]]:
+
+    out: list[dict[str, Any]] = []
+
+    n = len(t)
+
+    for ev in event_reports:
+
+        e = dict(ev)
+
+        a = int(e.get("start_hour", -1))
+
+        b = int(e.get("end_hour", -1))
+
+        p = int(e.get("system_peak_hour", -1))
+
+        e["start_time_label"] = t[a].strftime("%Y-%m-%d %H:%M") if 0 <= a < n else ""
+
+        e["end_time_label"] = t[b].strftime("%Y-%m-%d %H:%M") if 0 <= b < n else ""
+
+        e["system_peak_time_label"] = t[p].strftime("%Y-%m-%d %H:%M") if 0 <= p < n else ""
+
+        culprits = []
+
+        for c in e.get("culprits", []) or []:
+
+            c2 = dict(c)
+
+            ph = int(c2.get("peak_hour", -1))
+
+            c2["peak_time_label"] = t[ph].strftime("%Y-%m-%d %H:%M") if 0 <= ph < n else ""
+
+            culprits.append(c2)
+
+        e["culprits"] = culprits
+
+        out.append(e)
+
+    return out
 
 
 

@@ -76,11 +76,11 @@
             <div class="col-lg-6">
               <div class="border rounded p-3 bg-white">
                 <div class="d-flex justify-content-between align-items-center">
-                  <div class="fw-semibold">事件窗口：H{{ ev.start_hour }} ~ H{{ ev.end_hour }}</div>
+                  <div class="fw-semibold">事件窗口：{{ ev.start_time_label }} ~ {{ ev.end_time_label }}</div>
                   <span class="badge text-bg-warning">duration={{ ev.duration_hours }}h</span>
                 </div>
                 <div class="small text-secondary mt-1">
-                  系统峰值：H{{ ev.system_peak_hour }}（{{ "%.0f"|format(ev.system_peak_rpm) }} RPM）
+                  系统峰值：{{ ev.system_peak_time_label }}（{{ "%.0f"|format(ev.system_peak_rpm) }} RPM）
                 </div>
                 <div class="mt-2">
                   <div class="small text-secondary mb-1">主因用户（按超额贡献）</div>
@@ -90,7 +90,7 @@
                         <li class="small">
                           <code>{{ c.user_id }}</code>
                           <span class="text-secondary">贡献占比 {{ "%.1f"|format(c.excess_ratio*100) }}%</span>
-                          <span class="text-secondary">· 峰值 H{{ c.peak_hour }}（{{ "%.0f"|format(c.peak_rpm) }}）</span>
+                          <span class="text-secondary">· 峰值 {{ c.peak_time_label }}（{{ "%.0f"|format(c.peak_rpm) }}）</span>
                           <a class="ms-2" href="{{ url_for('user_detail', session_id=session_id, user_id=c.user_id) }}">详情</a>
                         </li>
                       {% endfor %}

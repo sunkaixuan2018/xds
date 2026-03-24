@@ -18,14 +18,14 @@
   <div class="card shadow-sm mb-3">
     <div class="card-body">
       <div class="d-flex justify-content-between align-items-center">
-        <div class="fw-semibold">事件窗口：H{{ ev.start_hour }} ~ H{{ ev.end_hour }}</div>
+        <div class="fw-semibold">事件窗口：{{ ev.start_time_label }} ~ {{ ev.end_time_label }}</div>
         <span class="badge text-bg-warning">duration={{ ev.duration_hours }}h</span>
       </div>
       <div class="small text-secondary mt-1">
         时间范围：<code>{{ start_dt }}</code> → <code>{{ end_dt }}</code>
       </div>
       <div class="small text-secondary mt-1">
-        系统峰值：H{{ ev.system_peak_hour }}（{{ "%.0f"|format(ev.system_peak_rpm) }} RPM）
+        系统峰值：{{ ev.system_peak_time_label }}（{{ "%.0f"|format(ev.system_peak_rpm) }} RPM）
       </div>
       <hr />
       <div class="small text-secondary mb-2">主因用户（按超额贡献）</div>
@@ -47,7 +47,7 @@
                   <td><code>{{ c.user_id }}</code></td>
                   <td class="text-end">{{ "%.1f"|format(c.excess_ratio*100) }}%</td>
                   <td class="text-end">{{ "%.0f"|format(c.peak_rpm) }}</td>
-                  <td class="text-end">H{{ c.peak_hour }}</td>
+                  <td class="text-end">{{ c.peak_time_label }}</td>
                   <td class="text-end">
                     <a class="btn btn-sm btn-outline-primary" href="{{ url_for('user_detail', session_id=session_id, user_id=c.user_id) }}">查看用户曲线</a>
                   </td>

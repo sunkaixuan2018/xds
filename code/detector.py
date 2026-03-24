@@ -59,6 +59,9 @@ class DetectorConfig:
     culprit_top_k: int = 2
     culprit_cum_ratio: float = 0.7
     culprit_min_ratio: float = 0.05
+    # In system event windows, trigger user anomaly when excess contribution ratio
+    # is high enough, even if share/growth rules are not hit.
+    event_contrib_ratio_trigger: float = 0.35
 
 
 def _parse_hour_columns(df: pd.DataFrame) -> list[str]:
@@ -452,28 +455,39 @@ def detect_anomalies(
 
     # Culprit localization by excess contribution inside each event window（仅从未被判定为正常的用户中识别：事件窗口内至少有一个异常点）
     event_reports: list[dict[str, Any]] = []
+    event_contrib_flags = np.zeros_like(flags, dtype=bool)
     for (a, b) in events:
         excess = np.clip(X[:, a : b + 1] - mu_abs[:, a : b + 1], 0, None)
         excess_sum_user = excess.sum(axis=1)
-        anom_in_window = np.array([bool(flags[i, a : b + 1].any()) for i in range(X.shape[0])], dtype=bool)
-        excess_sum_user = np.where(anom_in_window, excess_sum_user, 0.0)
         total_excess = float(excess_sum_user.sum())
-        if total_excess <= 0:
-            continue
 
-        order = np.argsort(excess_sum_user)[::-1]
-        selected = []
-        cum = 0.0
-        for idx in order[: max(cfg.culprit_top_k, 1) * 6]:
-            val = float(excess_sum_user[idx])
-            if val <= 0:
-                break
-            if (val / total_excess) < cfg.culprit_min_ratio and selected:
-                break
-            selected.append((idx, val))
-            cum += val
-            if len(selected) >= cfg.culprit_top_k or (cum / total_excess) >= cfg.culprit_cum_ratio:
-                break
+        selected: list[tuple[int, float]] = []
+        if total_excess > 0:
+            order = np.argsort(excess_sum_user)[::-1]
+            cum = 0.0
+            for idx in order[: max(cfg.culprit_top_k, 1) * 6]:
+                val = float(excess_sum_user[idx])
+                if val <= 0:
+                    break
+                if (val / total_excess) < cfg.culprit_min_ratio and selected:
+                    break
+                selected.append((idx, val))
+                cum += val
+                if len(selected) >= cfg.culprit_top_k or (cum / total_excess) >= cfg.culprit_cum_ratio:
+                    break
+
+            # Contribution-based user trigger within event window:
+            # mark each major contributor's peak hour in this window as anomalous.
+            for idx in order:
+                val = float(excess_sum_user[idx])
+                if val <= 0:
+                    break
+                ratio_user = val / total_excess
+                if ratio_user < cfg.event_contrib_ratio_trigger:
+                    continue
+                local = X[idx, a : b + 1]
+                peak_h = a + int(np.argmax(local))
+                event_contrib_flags[idx, peak_h] = True
 
         culprits = []
         for (idx, val) in selected:
@@ -502,6 +516,9 @@ def detect_anomalies(
                 "culprits": culprits,
             }
         )
+
+    # Merge contribution-based flags (event-only) into final user flags.
+    flags = flags | event_contrib_flags
 
     # System stats
     system_stats = {
