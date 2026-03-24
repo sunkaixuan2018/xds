@@ -45,6 +45,7 @@
                   <th class="text-end">贡献占比</th>
                   <th class="text-end">峰值</th>
                   <th class="text-end">峰值小时</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
@@ -54,6 +55,9 @@
                     <td class="text-end">{{ "%.1f"|format(c.excess_ratio*100) }}%</td>
                     <td class="text-end">{{ "%.0f"|format(c.peak_rpm) }}</td>
                     <td class="text-end">{{ c.peak_time_label }}</td>
+                    <td class="text-end">
+                      <a class="btn btn-sm btn-outline-primary" href="{{ url_for('user_detail', session_id=session_id, user_id=c.user_id) }}">查看用户曲线</a>
+                    </td>
                   </tr>
                 {% endfor %}
               </tbody>
@@ -72,6 +76,7 @@
                   <th class="text-end">贡献占比</th>
                   <th class="text-end">峰值</th>
                   <th class="text-end">峰值小时</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
@@ -81,6 +86,9 @@
                     <td class="text-end">{{ "%.1f"|format(c.excess_ratio*100) }}%</td>
                     <td class="text-end">{{ "%.0f"|format(c.peak_rpm) }}</td>
                     <td class="text-end">{{ c.peak_time_label }}</td>
+                    <td class="text-end">
+                      <a class="btn btn-sm btn-outline-primary" href="{{ url_for('user_detail', session_id=session_id, user_id=c.user_id) }}">查看用户曲线</a>
+                    </td>
                   </tr>
                 {% endfor %}
               </tbody>

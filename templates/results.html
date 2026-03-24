@@ -96,21 +96,11 @@
   <div class="card shadow-sm mb-3">
     <div class="card-body">
       <div class="d-flex justify-content-between align-items-center mb-2">
-        <h6 class="mb-0">系统总量时序（RPM）</h6>
+        <h6 class="mb-0">系统总量时序（RPM/TPM 双轴）</h6>
         <span class="badge text-bg-light">系统事件数={{ system_stats.event_count }} · 事件小时={{ system_stats.event_hours_count }}</span>
       </div>
       <div class="plotly-chart">
         {{ system_fig_html|safe }}
-      </div>
-    </div>
-  </div>
-  <div class="card shadow-sm mb-3">
-    <div class="card-body">
-      <div class="d-flex justify-content-between align-items-center mb-2">
-        <h6 class="mb-0">系统总量时序（TPM）</h6>
-      </div>
-      <div class="plotly-chart">
-        {{ system_fig_tpm_html|safe }}
       </div>
     </div>
   </div>
@@ -165,6 +155,7 @@
                             <code>{{ c.user_id }}</code>
                             <span class="text-secondary">贡献占比 {{ "%.1f"|format(c.excess_ratio*100) }}%</span>
                             <span class="text-secondary">· 峰值 {{ c.peak_time_label }}（{{ "%.0f"|format(c.peak_rpm) }}）</span>
+                            <a class="ms-2" href="{{ url_for('user_detail', session_id=session_id, user_id=c.user_id) }}">详情</a>
                           </li>
                         {% endfor %}
                       </ul>
@@ -179,6 +170,7 @@
                             <code>{{ c.user_id }}</code>
                             <span class="text-secondary">贡献占比 {{ "%.1f"|format(c.excess_ratio*100) }}%</span>
                             <span class="text-secondary">· 峰值 {{ c.peak_time_label }}（{{ "%.0f"|format(c.peak_rpm) }}）</span>
+                            <a class="ms-2" href="{{ url_for('user_detail', session_id=session_id, user_id=c.user_id) }}">详情</a>
                           </li>
                         {% endfor %}
                       </ul>

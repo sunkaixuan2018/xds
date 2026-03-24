@@ -18,20 +18,12 @@
   {% if is_dual %}
     <div class="card shadow-sm mb-3">
       <div class="card-body">
-        <h6 class="mb-2">池子/系统曲线（RPM）</h6>
+        <h6 class="mb-2">池子/系统曲线（RPM/TPM 双轴）</h6>
         <div class="plotly-chart">
           {{ system_fig_html|safe }}
         </div>
-      </div>
-    </div>
-    <div class="card shadow-sm mb-3">
-      <div class="card-body">
-        <h6 class="mb-2">池子/系统曲线（TPM）</h6>
-        <div class="plotly-chart">
-          {{ system_fig_tpm_html|safe }}
-        </div>
         <div class="text-secondary small mt-2">
-          图中包含系统总量、季节中位数、阈值带与系统异常点；事件窗口为黄色高亮。
+          左轴为 RPM，右轴为 TPM，事件窗口为黄色高亮。
         </div>
       </div>
     </div>
@@ -136,7 +128,7 @@
     <div class="card shadow-sm mb-3">
       <div class="card-body">
         <div class="d-flex justify-content-between align-items-center mb-2">
-          <h6 class="mb-0">用户时序图（RPM）</h6>
+          <h6 class="mb-0">用户时序图（RPM/TPM 双轴）</h6>
           <span class="badge text-bg-light">
             growth_threshold={{ cfg.growth_rate_threshold }} · user_k={{ cfg.user_k }} · share_z={{ cfg.share_z }}
           </span>
@@ -144,16 +136,8 @@
         <div class="plotly-chart">
           {{ user_fig_html|safe }}
         </div>
-      </div>
-    </div>
-    <div class="card shadow-sm mb-3">
-      <div class="card-body">
-        <h6 class="mb-0">用户时序图（TPM）</h6>
-        <div class="plotly-chart mt-2">
-          {{ user_fig_tpm_html|safe }}
-        </div>
         <div class="text-secondary small mt-2">
-          红色点为最终判定的异常点。悬浮提示包含：growth_rate、abs_z、share_z（若系统过载）。
+          左轴为 RPM，右轴为 TPM。红色菱形为 RPM 异常，橙色圆点为 TPM 异常。
         </div>
       </div>
     </div>

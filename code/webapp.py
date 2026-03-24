@@ -1118,28 +1118,16 @@ def create_app() -> Flask:
 
         ratio_threshold = float(s["cfg"].get("sys_ratio_threshold", 1.10))
         if is_dual:
-            system_fig_rpm = build_system_figure(
+            system_fig = build_system_dual_figure(
                 t,
                 np_array(s.get("S_rpm", s["S"])),
-                np_array(s.get("system_median_rpm", s["system_median"])),
-                np_array(s.get("system_ratio_rpm", s["system_ratio"])),
-                np_bool(s.get("sys_anom_rpm", s["sys_anom"])),
-                np_bool(s.get("sys_event_mask_rpm", s["sys_event_mask"])),
-                s.get("events_rpm", s.get("events", [])),
-                ratio_threshold,
-            )
-            system_fig_tpm = build_system_figure(
-                t,
                 np_array(s.get("S_tpm", s["S"])),
-                np_array(s.get("system_median_tpm", s["system_median"])),
-                np_array(s.get("system_ratio_tpm", s["system_ratio"])),
+                np_bool(s.get("sys_anom_rpm", s["sys_anom"])),
                 np_bool(s.get("sys_anom_tpm", s["sys_anom"])),
-                np_bool(s.get("sys_event_mask_tpm", s["sys_event_mask"])),
-                s.get("events_tpm", s.get("events", [])),
-                ratio_threshold,
+                s.get("events", []),
             )
-            system_fig_html = pio.to_html(system_fig_rpm, full_html=False, include_plotlyjs="inline")
-            system_fig_tpm_html = pio.to_html(system_fig_tpm, full_html=False, include_plotlyjs=False)
+            system_fig_html = pio.to_html(system_fig, full_html=False, include_plotlyjs="inline")
+            system_fig_tpm_html = ""
         else:
             system_fig = build_system_figure(
                 t,
@@ -1252,28 +1240,15 @@ def create_app() -> Flask:
         sys_event_mask = np_bool(s["sys_event_mask"])
 
         if is_dual:
-            fig_rpm = build_user_figure(
+            fig_dual = build_user_dual_figure(
                 t,
                 np_array(s.get("X_rpm", s["X"]))[idx],
-                np_bool_matrix(s.get("flags_rpm", s["flags"]))[idx],
-                np_bool(s.get("sys_anom_rpm", s["sys_anom"])),
-                np_bool(s.get("sys_event_mask_rpm", s["sys_event_mask"])),
-                np_array(s.get("growth_rpm", s["growth"]))[idx],
-                np_array(s.get("abs_z_rpm", s["abs_z"]))[idx],
-                np_array(s.get("share_z_rpm", s["share_z"]))[idx],
-            )
-            fig_tpm = build_user_figure(
-                t,
                 np_array(s.get("X_tpm", s["X"]))[idx],
+                np_bool_matrix(s.get("flags_rpm", s["flags"]))[idx],
                 np_bool_matrix(s.get("flags_tpm", s["flags"]))[idx],
-                np_bool(s.get("sys_anom_tpm", s["sys_anom"])),
-                np_bool(s.get("sys_event_mask_tpm", s["sys_event_mask"])),
-                np_array(s.get("growth_tpm", s["growth"]))[idx],
-                np_array(s.get("abs_z_tpm", s["abs_z"]))[idx],
-                np_array(s.get("share_z_tpm", s["share_z"]))[idx],
             )
-            user_fig_html = pio.to_html(fig_rpm, full_html=False, include_plotlyjs="inline")
-            user_fig_tpm_html = pio.to_html(fig_tpm, full_html=False, include_plotlyjs=False)
+            user_fig_html = pio.to_html(fig_dual, full_html=False, include_plotlyjs="inline")
+            user_fig_tpm_html = ""
         else:
             fig = build_user_figure(t, x, flags, sys_anom, sys_event_mask, growth, abs_z, share_z)
             user_fig_html = pio.to_html(fig, full_html=False, include_plotlyjs="inline")
@@ -1285,28 +1260,16 @@ def create_app() -> Flask:
 
         ratio_threshold = float(s["cfg"].get("sys_ratio_threshold", 1.1))
         if is_dual:
-            system_fig_rpm = build_system_figure(
+            system_fig = build_system_dual_figure(
                 t,
                 s.get("S_rpm", s["S"]),
-                s.get("system_median_rpm", s["system_median"]),
-                s.get("system_ratio_rpm", s["system_ratio"]),
-                s.get("sys_anom_rpm", s["sys_anom"]),
-                s.get("sys_event_mask_rpm", s["sys_event_mask"]),
-                s.get("events_rpm", s["events"]),
-                ratio_threshold,
-            )
-            system_fig_tpm = build_system_figure(
-                t,
                 s.get("S_tpm", s["S"]),
-                s.get("system_median_tpm", s["system_median"]),
-                s.get("system_ratio_tpm", s["system_ratio"]),
+                s.get("sys_anom_rpm", s["sys_anom"]),
                 s.get("sys_anom_tpm", s["sys_anom"]),
-                s.get("sys_event_mask_tpm", s["sys_event_mask"]),
-                s.get("events_tpm", s["events"]),
-                ratio_threshold,
+                s.get("events", s["events"]),
             )
-            system_fig_html = pio.to_html(system_fig_rpm, full_html=False, include_plotlyjs="inline")
-            system_fig_tpm_html = pio.to_html(system_fig_tpm, full_html=False, include_plotlyjs=False)
+            system_fig_html = pio.to_html(system_fig, full_html=False, include_plotlyjs="inline")
+            system_fig_tpm_html = ""
         else:
             system_fig = build_system_figure(
                 t,
@@ -1976,6 +1939,85 @@ def build_system_figure(
     return fig
 
 
+def build_system_dual_figure(
+    t: list[datetime],
+    s_rpm: Any,
+    s_tpm: Any,
+    sys_anom_rpm: Any,
+    sys_anom_tpm: Any,
+    events: Any,
+) -> go.Figure:
+    fig = make_subplots(rows=1, cols=1, specs=[[{"secondary_y": True}]])
+
+    s_rpm = np.asarray(s_rpm, dtype=float)
+    s_tpm = np.asarray(s_tpm, dtype=float)
+    anom_rpm = np.asarray(sys_anom_rpm, dtype=bool)
+    anom_tpm = np.asarray(sys_anom_tpm, dtype=bool)
+
+    fig.add_trace(
+        go.Scatter(x=t, y=s_rpm, mode="lines", name="SystemRPM", line=dict(color="#0d6efd")),
+        secondary_y=False,
+    )
+    fig.add_trace(
+        go.Scatter(x=t, y=s_tpm, mode="lines", name="SystemTPM", line=dict(color="#20c997")),
+        secondary_y=True,
+    )
+
+    idx_rpm = np.where(anom_rpm)[0] if len(t) else np.array([], dtype=int)
+    if idx_rpm.size:
+        fig.add_trace(
+            go.Scatter(
+                x=[t[i] for i in idx_rpm],
+                y=[s_rpm[i] for i in idx_rpm],
+                mode="markers",
+                name="RPMAnomaly",
+                marker=dict(size=8, color="#dc3545", symbol="diamond"),
+            ),
+            secondary_y=False,
+        )
+
+    idx_tpm = np.where(anom_tpm)[0] if len(t) else np.array([], dtype=int)
+    if idx_tpm.size:
+        fig.add_trace(
+            go.Scatter(
+                x=[t[i] for i in idx_tpm],
+                y=[s_tpm[i] for i in idx_tpm],
+                mode="markers",
+                name="TPMAnomaly",
+                marker=dict(size=7, color="#fd7e14", symbol="circle"),
+            ),
+            secondary_y=True,
+        )
+
+    if events:
+        for (a, b) in events:
+            a = int(a)
+            b = int(b)
+            if a < 0 or b >= len(t):
+                continue
+            fig.add_vrect(
+                x0=t[a],
+                x1=t[b] + timedelta(hours=1),
+                fillcolor="rgba(255, 193, 7, 0.12)",
+                line_width=0,
+                annotation_text="EventWindow",
+                annotation_position="top left",
+            )
+
+    fig.update_yaxes(title_text="RPM", secondary_y=False)
+    fig.update_yaxes(title_text="TPM", secondary_y=True)
+    fig.update_xaxes(title_text="时间")
+    fig.update_layout(
+        title="系统总量时序（RPM/TPM 双轴）",
+        template="plotly_white",
+        width=_CHART_WIDTH,
+        height=480,
+        margin=_CHART_MARGIN,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+    )
+    return fig
+
+
 
 
 
@@ -2095,6 +2137,67 @@ def build_user_figure(
 
     )
 
+    return fig
+
+
+def build_user_dual_figure(
+    t: list[datetime],
+    x_rpm: Any,
+    x_tpm: Any,
+    flags_rpm: Any,
+    flags_tpm: Any,
+) -> go.Figure:
+    fig = make_subplots(rows=1, cols=1, specs=[[{"secondary_y": True}]])
+    x_rpm = np.asarray(x_rpm, dtype=float)
+    x_tpm = np.asarray(x_tpm, dtype=float)
+    flags_rpm = np.asarray(flags_rpm, dtype=bool)
+    flags_tpm = np.asarray(flags_tpm, dtype=bool)
+
+    fig.add_trace(
+        go.Scatter(x=t, y=x_rpm, mode="lines", name="UserRPM", line=dict(color="#0d6efd")),
+        secondary_y=False,
+    )
+    fig.add_trace(
+        go.Scatter(x=t, y=x_tpm, mode="lines", name="UserTPM", line=dict(color="#20c997")),
+        secondary_y=True,
+    )
+
+    idx_rpm = np.where(flags_rpm)[0]
+    if idx_rpm.size:
+        fig.add_trace(
+            go.Scatter(
+                x=[t[h] for h in idx_rpm],
+                y=[x_rpm[h] for h in idx_rpm],
+                mode="markers",
+                name="RPMAnomaly",
+                marker=dict(size=8, color="#dc3545", symbol="diamond"),
+            ),
+            secondary_y=False,
+        )
+    idx_tpm = np.where(flags_tpm)[0]
+    if idx_tpm.size:
+        fig.add_trace(
+            go.Scatter(
+                x=[t[h] for h in idx_tpm],
+                y=[x_tpm[h] for h in idx_tpm],
+                mode="markers",
+                name="TPMAnomaly",
+                marker=dict(size=7, color="#fd7e14", symbol="circle"),
+            ),
+            secondary_y=True,
+        )
+
+    fig.update_yaxes(title_text="RPM", secondary_y=False)
+    fig.update_yaxes(title_text="TPM", secondary_y=True)
+    fig.update_xaxes(title_text="时间")
+    fig.update_layout(
+        title="用户时序（RPM/TPM 双轴）",
+        template="plotly_white",
+        width=_CHART_WIDTH,
+        height=460,
+        margin=_CHART_MARGIN,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+    )
     return fig
 
 
