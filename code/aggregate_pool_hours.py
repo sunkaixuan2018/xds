@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import re
 from pathlib import Path
 
@@ -138,29 +139,73 @@ def normalize_pool(x: str) -> str:
 
 _INVALID_SHEET_CHARS = re.compile(r"[\[\]\:\*\?\/\\]")
 
+# Excel 工作表名上限 31；openpyxl 若收到更长字符串会截断，导致 writer.sheets[原名] KeyError，故必须自控长度。
+EXCEL_SHEET_MAX = 31
 
-def sanitize_excel_sheet_name(name: str, max_len: int = 31) -> str:
+
+def sanitize_excel_sheet_name(name: str, max_len: int = EXCEL_SHEET_MAX) -> str:
     s = _INVALID_SHEET_CHARS.sub("_", str(name).strip())
     s = s.strip("'") or "sheet"
+    if max_len < 1:
+        max_len = 1
     return s[:max_len]
 
 
 def build_sheet_name(pool_key: str, service_tag: str, used: set[str]) -> str:
-    """生成唯一、符合 Excel 限制的 sheet 名：pool__service。"""
-    base_pool = sanitize_excel_sheet_name(pool_key, 24)
-    base_svc = sanitize_excel_sheet_name(service_tag, 24)
-    raw = f"{base_pool}{SHEET_SEP}{base_svc}"
-    name = sanitize_excel_sheet_name(raw, 31)
+    """
+    生成唯一、长度 <= EXCEL_SHEET_MAX 的 sheet 名：优先可读「池子前缀__服务后缀」；
+    过长时截断两侧；仍冲突时用短 hash 区分。
+    """
+    sep = SHEET_SEP
+    sep_len = len(sep)
+
+    def candidate_readable() -> str:
+        # 左侧池子、右侧 service，总宽严格不超过 31
+        p_budget = 14
+        s_budget = EXCEL_SHEET_MAX - sep_len - p_budget
+        if s_budget < 4:
+            p_budget = EXCEL_SHEET_MAX - sep_len - 8
+            s_budget = 8
+        p = sanitize_excel_sheet_name(pool_key, p_budget)
+        s = sanitize_excel_sheet_name(service_tag, s_budget)
+        raw = f"{p}{sep}{s}"
+        return sanitize_excel_sheet_name(raw, EXCEL_SHEET_MAX)
+
+    def candidate_hashed(salt: bytes = b"") -> str:
+        digest = hashlib.sha256(pool_key.encode("utf-8") + b"\0" + service_tag.encode("utf-8") + salt).hexdigest()[:8]
+        p = sanitize_excel_sheet_name(pool_key, 10)
+        # 形如 b91b1526-55__a1b2c3d4，总长 <= 31
+        raw = f"{p}{sep}h{digest}"
+        return sanitize_excel_sheet_name(raw, EXCEL_SHEET_MAX)
+
+    name = candidate_readable()
     if name not in used:
         used.add(name)
         return name
-    for i in range(2, 1000):
+
+    for salt in (b"", b"x", b"y", b"z"):
+        cand = candidate_hashed(salt)
+        if cand not in used:
+            used.add(cand)
+            return cand
+
+    for i in range(2, 10000):
         suffix = f"_{i}"
-        cand = sanitize_excel_sheet_name(raw[: 31 - len(suffix)] + suffix, 31)
+        base = candidate_readable()
+        cand = sanitize_excel_sheet_name(base[: EXCEL_SHEET_MAX - len(suffix)] + suffix, EXCEL_SHEET_MAX)
         if cand not in used:
             used.add(cand)
             return cand
     raise RuntimeError("无法生成唯一 sheet 名")
+
+
+def _apply_domain_id_text_format_after_write(writer: pd.ExcelWriter, row_count: int) -> None:
+    """to_excel 之后用工作簿实际 sheet 名取表（openpyxl 可能对标题再截断/规范化，勿用传入字符串反查）。"""
+    wb = writer.book
+    title = wb.sheetnames[-1]
+    ws = wb[title]
+    for row in range(2, row_count + 2):
+        ws.cell(row=row, column=1).number_format = "@"
 
 
 def _pivot_pool_users(
@@ -246,22 +291,20 @@ def aggregate_by_pool_and_user(
                 pivot = _pivot_pool_users(g_svc, hour_index, metric)
                 sheet = build_sheet_name(pool, svc, used_sheet_names)
                 pivot.to_excel(writer, sheet_name=sheet, index=False)
-                ws = writer.sheets[sheet]
-                for row in range(2, len(pivot) + 2):
-                    ws.cell(row=row, column=1).number_format = "@"
+                _apply_domain_id_text_format_after_write(writer, len(pivot))
                 wrote_any = True
-                print(f"       [sheet] {sheet}（service={svc}），行数: {len(pivot)}")
+                actual = writer.book.sheetnames[-1]
+                print(f"       [sheet] {actual}（请求名={sheet}，service={svc}），行数: {len(pivot)}")
 
             # 2) 多个 service 时额外写「全部」合计（同用户同小时跨 service 求和）；仅 1 个 service 时不重复写与分面相同的数据
             if len(services) > 1:
                 pivot_all = _pivot_pool_users(g, hour_index, metric)
                 sheet_all = build_sheet_name(pool, ALL_TAG, used_sheet_names)
                 pivot_all.to_excel(writer, sheet_name=sheet_all, index=False)
-                ws = writer.sheets[sheet_all]
-                for row in range(2, len(pivot_all) + 2):
-                    ws.cell(row=row, column=1).number_format = "@"
+                _apply_domain_id_text_format_after_write(writer, len(pivot_all))
                 wrote_any = True
-                print(f"       [sheet] {sheet_all}（全部 service 合计），行数: {len(pivot_all)}")
+                actual_all = writer.book.sheetnames[-1]
+                print(f"       [sheet] {actual_all}（请求名={sheet_all}，全部合计），行数: {len(pivot_all)}")
 
         if not wrote_any:
             empty = pd.DataFrame({"info": ["no data"]})
