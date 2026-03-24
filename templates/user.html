@@ -27,7 +27,45 @@
     </div>
   </div>
 
-  {% if row %}
+  {% if is_dual and row_dual %}
+    <div class="card shadow-sm mb-3">
+      <div class="card-body">
+        <h6 class="mb-2">用户双指标汇总（RPM + TPM）</h6>
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead>
+              <tr class="text-secondary">
+                <th>指标</th>
+                <th class="text-end">命中数</th>
+                <th class="text-end">均值</th>
+                <th class="text-end">P95</th>
+                <th class="text-end">峰值</th>
+                <th>原因</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><b>RPM</b></td>
+                <td class="text-end">{{ row_dual.hit_count_rpm }}</td>
+                <td class="text-end">{{ "%.1f"|format(row_dual.avg_rpm) }}</td>
+                <td class="text-end">{{ "%.1f"|format(row_dual.p95_rpm) }}</td>
+                <td class="text-end">{{ "%.1f"|format(row_dual.max_rpm) }}</td>
+                <td class="small text-secondary">{{ row_dual.reason_rpm if row_dual.reason_rpm else "—" }}</td>
+              </tr>
+              <tr>
+                <td><b>TPM</b></td>
+                <td class="text-end">{{ row_dual.hit_count_tpm }}</td>
+                <td class="text-end">{{ "%.1f"|format(row_dual.avg_tpm) }}</td>
+                <td class="text-end">{{ "%.1f"|format(row_dual.p95_tpm) }}</td>
+                <td class="text-end">{{ "%.1f"|format(row_dual.max_tpm) }}</td>
+                <td class="small text-secondary">{{ row_dual.reason_tpm if row_dual.reason_tpm else "—" }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  {% elif row %}
     <div class="row g-3 mb-3">
       <div class="col-md-3">
         <div class="card stat-card shadow-sm">
@@ -89,7 +127,15 @@
     </div>
   </div>
 
-  {% if row %}
+  {% if is_dual and row_dual %}
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h6 class="mb-2">命中小时（按指标）</h6>
+        <div class="small text-secondary">RPM：{{ row_dual.hit_hours_rpm if row_dual.hit_hours_rpm else "—" }}</div>
+        <div class="small text-secondary mt-1">TPM：{{ row_dual.hit_hours_tpm if row_dual.hit_hours_tpm else "—" }}</div>
+      </div>
+    </div>
+  {% elif row %}
     <div class="card shadow-sm">
       <div class="card-body">
         <h6 class="mb-2">命中小时（索引）</h6>

@@ -101,6 +101,53 @@ def _get_int(form: Any, key: str, default: int) -> int:
     return int(float(v))
 
 
+def _load_dataframe_flexible(file_path: str) -> pd.DataFrame:
+    """
+    Load csv/xlsx and tolerate non-'rpm' sheet names for xlsx.
+    """
+    path = str(file_path)
+    if path.lower().endswith((".xlsx", ".xls")):
+        try:
+            return pd.read_excel(path, sheet_name="rpm")
+        except Exception:
+            return pd.read_excel(path, sheet_name=0)
+    return pd.read_csv(path)
+
+
+def _events_from_mask(mask: np.ndarray, min_len: int, merge_gap: int) -> list[tuple[int, int]]:
+    idx = np.where(np.asarray(mask, dtype=bool))[0]
+    if idx.size == 0:
+        return []
+    segments: list[tuple[int, int]] = []
+    s = int(idx[0])
+    p = int(idx[0])
+    for h in idx[1:]:
+        h = int(h)
+        if h <= p + 1:
+            p = h
+            continue
+        segments.append((s, p))
+        s = p = h
+    segments.append((s, p))
+    segments = [(a, b) for (a, b) in segments if (b - a + 1) >= int(max(min_len, 1))]
+    if not segments:
+        return []
+    merged = [segments[0]]
+    for a, b in segments[1:]:
+        la, lb = merged[-1]
+        if a <= lb + int(max(merge_gap, 0)) + 1:
+            merged[-1] = (la, max(lb, b))
+        else:
+            merged.append((a, b))
+    return merged
+
+
+def _overlap_len(a1: int, b1: int, a2: int, b2: int) -> int:
+    left = max(a1, a2)
+    right = min(b1, b2)
+    return max(0, right - left + 1)
+
+
 def _detector_config_for_sensitivity(sensitivity: str) -> DetectorConfig:
     """根据前端选择的高/中/低灵敏度返回对应检测配置。高=更多异常，低=更少异常。"""
     sensitivity = (sensitivity or "medium").strip().lower()
@@ -246,9 +293,8 @@ def create_app() -> Flask:
 
     def index():
 
-        """首页即按池子分析：上传 result Excel"""
-
-        return render_template("pool_upload.html")
+        default_start = datetime.now().replace(minute=0, second=0, microsecond=0).isoformat(timespec="minutes")
+        return render_template("index.html", default_start=default_start, defaults=asdict(DetectorConfig()))
 
 
 
@@ -256,11 +302,12 @@ def create_app() -> Flask:
 
     def detect():
 
-        f = request.files.get("file")
+        f_rpm = request.files.get("file_rpm")
+        f_tpm = request.files.get("file_tpm")
 
-        if not f or not f.filename:
+        if not f_rpm or not f_rpm.filename or not f_tpm or not f_tpm.filename:
 
-            flash("请先选择一个本地文件（xlsx/csv）。", "danger")
+            flash("请同时上传 RPM 与 TPM 两个文件。", "danger")
 
             return redirect(url_for("index"))
 
@@ -344,23 +391,48 @@ def create_app() -> Flask:
 
 
 
-        filename = secure_filename(f.filename)
+        filename_rpm = secure_filename(f_rpm.filename)
+        filename_tpm = secure_filename(f_tpm.filename)
 
         session_id = uuid.uuid4().hex
 
-        saved_path = UPLOAD_DIR / f"{session_id}__{filename}"
+        saved_path_rpm = UPLOAD_DIR / f"{session_id}__rpm__{filename_rpm}"
+        saved_path_tpm = UPLOAD_DIR / f"{session_id}__tpm__{filename_tpm}"
 
-        f.save(saved_path)
+        f_rpm.save(saved_path_rpm)
+        f_tpm.save(saved_path_tpm)
 
 
 
         try:
 
-            df = load_dataframe(str(saved_path))
+            df_rpm = _load_dataframe_flexible(str(saved_path_rpm))
+            df_tpm = _load_dataframe_flexible(str(saved_path_tpm))
 
-            df, h_cols = validate_and_prepare(df)
+            df_rpm, h_cols_rpm = validate_and_prepare(df_rpm)
+            df_tpm, h_cols_tpm = validate_and_prepare(df_tpm)
 
-            res = detect_anomalies(cfg, df, h_cols)
+            if h_cols_rpm != h_cols_tpm:
+                raise ValueError("RPM 与 TPM 文件时间列不一致，请确保列名与顺序完全相同。")
+
+            # 用户集合按交集对齐，避免双文件存在缺失行导致错位。
+            rpm_uid = df_rpm["user_id"].astype(str)
+            tpm_uid = df_tpm["user_id"].astype(str)
+            shared = [u for u in rpm_uid.tolist() if u in set(tpm_uid.tolist())]
+            if not shared:
+                raise ValueError("RPM 与 TPM 文件没有共同用户，无法联合分析。")
+            if len(shared) < len(rpm_uid) or len(shared) < len(tpm_uid):
+                flash(f"RPM/TPM 用户集合不完全一致，已按交集 {len(shared)} 个用户联合分析。", "warning")
+            df_rpm = df_rpm[df_rpm["user_id"].astype(str).isin(shared)].copy()
+            df_tpm = df_tpm[df_tpm["user_id"].astype(str).isin(shared)].copy()
+            df_rpm["__order"] = pd.Categorical(df_rpm["user_id"].astype(str), categories=shared, ordered=True)
+            df_tpm["__order"] = pd.Categorical(df_tpm["user_id"].astype(str), categories=shared, ordered=True)
+            df_rpm = df_rpm.sort_values("__order").drop(columns="__order").reset_index(drop=True)
+            df_tpm = df_tpm.sort_values("__order").drop(columns="__order").reset_index(drop=True)
+
+            h_cols = h_cols_rpm
+            res_rpm = detect_anomalies(cfg, df_rpm, h_cols)
+            res_tpm = detect_anomalies(cfg, df_tpm, h_cols)
 
 
 
@@ -376,23 +448,128 @@ def create_app() -> Flask:
 
                 t,
 
-                res["S"],
+                res_rpm["S"],
 
-                res["system_median"],
+                res_rpm["system_median"],
 
-                res["system_ratio"],
+                res_rpm["system_ratio"],
 
-                res["sys_anom"],
+                res_rpm["sys_anom"],
 
-                res["sys_event_mask"],
+                res_rpm["sys_event_mask"],
 
-                res["events"],
+                res_rpm["events"],
 
                 cfg.sys_ratio_threshold,
 
             )
 
             system_fig_html = pio.to_html(system_fig, full_html=False, include_plotlyjs="inline")
+
+            # 联合事件：RPM/TPM 事件掩码并集
+            mask_rpm = np.asarray(res_rpm["sys_event_mask"], dtype=bool)
+            mask_tpm = np.asarray(res_tpm["sys_event_mask"], dtype=bool)
+            sys_event_mask_joint = mask_rpm | mask_tpm
+            events_joint = _events_from_mask(sys_event_mask_joint, cfg.event_min_len, cfg.event_merge_gap)
+
+            # 联合事件报告：按窗口分别输出 RPM 与 TPM 根因
+            reports_rpm = res_rpm.get("event_reports", [])
+            reports_tpm = res_tpm.get("event_reports", [])
+            event_reports_joint: list[dict[str, Any]] = []
+            for (a, b) in events_joint:
+                rpm_active = bool(np.asarray(res_rpm["sys_anom"], dtype=bool)[a : b + 1].any())
+                tpm_active = bool(np.asarray(res_tpm["sys_anom"], dtype=bool)[a : b + 1].any())
+                if rpm_active and tpm_active:
+                    scope = "both"
+                elif rpm_active:
+                    scope = "rpm_only"
+                else:
+                    scope = "tpm_only"
+
+                best_rpm = None
+                if rpm_active and reports_rpm:
+                    best_rpm = max(
+                        reports_rpm,
+                        key=lambda ev: _overlap_len(a, b, int(ev.get("start_hour", -1)), int(ev.get("end_hour", -1))),
+                    )
+                best_tpm = None
+                if tpm_active and reports_tpm:
+                    best_tpm = max(
+                        reports_tpm,
+                        key=lambda ev: _overlap_len(a, b, int(ev.get("start_hour", -1)), int(ev.get("end_hour", -1))),
+                    )
+
+                culprits_rpm = (best_rpm or {}).get("culprits", []) if rpm_active else []
+                culprits_tpm = (best_tpm or {}).get("culprits", []) if tpm_active else []
+                culprits_primary = culprits_rpm if culprits_rpm else culprits_tpm
+                event_reports_joint.append(
+                    {
+                        "start_hour": int(a),
+                        "end_hour": int(b),
+                        "duration_hours": int(b - a + 1),
+                        "rootcause_scope": scope,
+                        "system_peak_hour_rpm": int(a + int(np.argmax(np.asarray(res_rpm["S"])[a : b + 1]))),
+                        "system_peak_rpm": float(np.max(np.asarray(res_rpm["S"])[a : b + 1])),
+                        "system_peak_hour_tpm": int(a + int(np.argmax(np.asarray(res_tpm["S"])[a : b + 1]))),
+                        "system_peak_tpm": float(np.max(np.asarray(res_tpm["S"])[a : b + 1])),
+                        "culprits_rpm": culprits_rpm,
+                        "culprits_tpm": culprits_tpm,
+                        # 兼容旧逻辑（建议模块）
+                        "culprits": culprits_primary,
+                        "system_peak_hour": int(a + int(np.argmax(np.asarray(res_rpm["S"])[a : b + 1]))),
+                        "system_peak_rpm_legacy": float(np.max(np.asarray(res_rpm["S"])[a : b + 1])),
+                        "system_peak_rpm": float(np.max(np.asarray(res_rpm["S"])[a : b + 1])),
+                    }
+                )
+
+            stats_rpm = res_rpm["system_stats"]
+            stats_tpm = res_tpm["system_stats"]
+            system_stats_joint = {
+                "hours": int(len(h_cols)),
+                "event_count": int(len(events_joint)),
+                "event_hours_count": int(np.asarray(sys_event_mask_joint, dtype=bool).sum()),
+                "rpm": {
+                    "system_avg": float(stats_rpm.get("system_avg", 0.0)),
+                    "system_p95": float(stats_rpm.get("system_p95", 0.0)),
+                    "system_max": float(stats_rpm.get("system_max", 0.0)),
+                    "system_anom_hours_count": int(stats_rpm.get("system_anom_hours_count", 0)),
+                },
+                "tpm": {
+                    "system_avg": float(stats_tpm.get("system_avg", 0.0)),
+                    "system_p95": float(stats_tpm.get("system_p95", 0.0)),
+                    "system_max": float(stats_tpm.get("system_max", 0.0)),
+                    "system_anom_hours_count": int(stats_tpm.get("system_anom_hours_count", 0)),
+                },
+            }
+
+            rec_rpm_by_uid = {r["user_id"]: r for r in res_rpm["records"].to_dict(orient="records")}
+            rec_tpm_by_uid = {r["user_id"]: r for r in res_tpm["records"].to_dict(orient="records")}
+            user_ids = res_rpm["user_ids"]
+            records_joint = []
+            for i, uid in enumerate(user_ids):
+                rr = rec_rpm_by_uid.get(uid, {})
+                rt = rec_tpm_by_uid.get(uid, {})
+                hit_rpm = int(np.asarray(res_rpm["flags"], dtype=bool)[i].sum())
+                hit_tpm = int(np.asarray(res_tpm["flags"], dtype=bool)[i].sum())
+                records_joint.append(
+                    {
+                        "user_id": uid,
+                        "hit_count_rpm": hit_rpm,
+                        "hit_count_tpm": hit_tpm,
+                        "hit_count_any": int(hit_rpm > 0 or hit_tpm > 0),
+                        "avg_rpm": float(np.mean(np.asarray(res_rpm["X"])[i])),
+                        "p95_rpm": float(np.quantile(np.asarray(res_rpm["X"])[i], 0.95)),
+                        "max_rpm": float(np.max(np.asarray(res_rpm["X"])[i])),
+                        "avg_tpm": float(np.mean(np.asarray(res_tpm["X"])[i])),
+                        "p95_tpm": float(np.quantile(np.asarray(res_tpm["X"])[i], 0.95)),
+                        "max_tpm": float(np.max(np.asarray(res_tpm["X"])[i])),
+                        "reason_rpm": rr.get("reason", ""),
+                        "reason_tpm": rt.get("reason", ""),
+                        "hit_hours_rpm": rr.get("hit_hours", ""),
+                        "hit_hours_tpm": rt.get("hit_hours", ""),
+                    }
+                )
+            records_joint.sort(key=lambda x: (-(x["hit_count_rpm"] + x["hit_count_tpm"]), -x["max_rpm"], -x["max_tpm"]))
 
 
 
@@ -402,13 +579,16 @@ def create_app() -> Flask:
 
                 "created_at": datetime.now(timezone.utc).isoformat(),
 
-                "file_name": filename,
+                "file_name": f"RPM={filename_rpm} ; TPM={filename_tpm}",
 
-                "saved_path": str(saved_path),
+                "saved_path": str(saved_path_rpm),
+                "saved_path_rpm": str(saved_path_rpm),
+                "saved_path_tpm": str(saved_path_tpm),
 
                 "start_time": start_time.isoformat(timespec="minutes"),
 
                 "cfg": asdict(cfg),
+                "analysis_mode": "dual",
 
                 "t": [dt.isoformat() for dt in t],
 
@@ -416,39 +596,68 @@ def create_app() -> Flask:
 
                 # For performance, store arrays in JSON-friendly form
 
-                "S": res["S"].tolist(),
+                "S": res_rpm["S"].tolist(),
+                "S_rpm": res_rpm["S"].tolist(),
+                "S_tpm": res_tpm["S"].tolist(),
 
-                "system_median": np.asarray(res["system_median"], dtype=float).tolist(),
+                "system_median": np.asarray(res_rpm["system_median"], dtype=float).tolist(),
+                "system_median_rpm": np.asarray(res_rpm["system_median"], dtype=float).tolist(),
+                "system_median_tpm": np.asarray(res_tpm["system_median"], dtype=float).tolist(),
 
-                "system_ratio": np.asarray(res["system_ratio"], dtype=float).tolist(),
+                "system_ratio": np.asarray(res_rpm["system_ratio"], dtype=float).tolist(),
+                "system_ratio_rpm": np.asarray(res_rpm["system_ratio"], dtype=float).tolist(),
+                "system_ratio_tpm": np.asarray(res_tpm["system_ratio"], dtype=float).tolist(),
 
-                "sys_anom": res["sys_anom"].astype(bool).tolist(),
+                "sys_anom": res_rpm["sys_anom"].astype(bool).tolist(),
+                "sys_anom_rpm": res_rpm["sys_anom"].astype(bool).tolist(),
+                "sys_anom_tpm": res_tpm["sys_anom"].astype(bool).tolist(),
 
-                "sys_event_mask": res["sys_event_mask"].astype(bool).tolist(),
+                "sys_event_mask": np.asarray(sys_event_mask_joint, dtype=bool).tolist(),
+                "sys_event_mask_rpm": res_rpm["sys_event_mask"].astype(bool).tolist(),
+                "sys_event_mask_tpm": res_tpm["sys_event_mask"].astype(bool).tolist(),
 
-                "events": res["events"],
+                "events": events_joint,
+                "events_rpm": res_rpm["events"],
+                "events_tpm": res_tpm["events"],
 
-                "event_reports": res["event_reports"],
+                "event_reports": event_reports_joint,
+                "event_reports_rpm": res_rpm["event_reports"],
+                "event_reports_tpm": res_tpm["event_reports"],
 
-                "user_ids": res["user_ids"],
+                "user_ids": user_ids,
 
-                "records_csv": res["records"].to_csv(index=False, encoding="utf-8"),
+                "records_csv": pd.DataFrame.from_records(records_joint).to_csv(index=False, encoding="utf-8"),
 
-                "records_json": res["records"].to_dict(orient="records"),
+                "records_json": records_joint,
+                "records_json_rpm": res_rpm["records"].to_dict(orient="records"),
+                "records_json_tpm": res_tpm["records"].to_dict(orient="records"),
 
-                "system_stats": res["system_stats"],
+                "system_stats": system_stats_joint,
+                "system_stats_rpm": stats_rpm,
+                "system_stats_tpm": stats_tpm,
 
                 # We keep these for user detail plots
 
-                "X": res["X"].tolist(),
+                "X": res_rpm["X"].tolist(),
+                "X_rpm": res_rpm["X"].tolist(),
+                "X_tpm": res_tpm["X"].tolist(),
 
-                "flags": res["flags"].astype(bool).tolist(),
+                "flags": np.asarray(res_rpm["flags"], dtype=bool).tolist(),
+                "flags_rpm": np.asarray(res_rpm["flags"], dtype=bool).tolist(),
+                "flags_tpm": np.asarray(res_tpm["flags"], dtype=bool).tolist(),
+                "flags_any": (np.asarray(res_rpm["flags"], dtype=bool) | np.asarray(res_tpm["flags"], dtype=bool)).tolist(),
 
-                "growth": res["growth"].tolist(),
+                "growth": res_rpm["growth"].tolist(),
+                "growth_rpm": res_rpm["growth"].tolist(),
+                "growth_tpm": res_tpm["growth"].tolist(),
 
-                "abs_z": res["abs_z"].tolist(),
+                "abs_z": res_rpm["abs_z"].tolist(),
+                "abs_z_rpm": res_rpm["abs_z"].tolist(),
+                "abs_z_tpm": res_tpm["abs_z"].tolist(),
 
-                "share_z": res["share_z"].tolist(),
+                "share_z": res_rpm["share_z"].tolist(),
+                "share_z_rpm": res_rpm["share_z"].tolist(),
+                "share_z_tpm": res_tpm["share_z"].tolist(),
 
             }
 
@@ -460,7 +669,7 @@ def create_app() -> Flask:
 
                 session_id=session_id,
 
-                file_name=filename,
+                file_name=f"RPM={filename_rpm} ; TPM={filename_tpm}",
 
                 start_time=start_time.isoformat(timespec="minutes"),
 
@@ -468,13 +677,14 @@ def create_app() -> Flask:
 
                 cfg=asdict(cfg),
 
-                system_stats=res["system_stats"],
+                system_stats=system_stats_joint,
 
-                records=res["records"].head(200).to_dict(orient="records"),
+                records=records_joint[:200],
 
-                event_reports=res["event_reports"],
+                event_reports=event_reports_joint,
 
                 system_fig_html=system_fig_html,
+                rootcause_mode_label="严格" if str(asdict(cfg).get("rootcause_mode", "strict")).lower() == "strict" else "宽松",
 
             )
 
@@ -758,6 +968,8 @@ def create_app() -> Flask:
 
         t = [datetime.fromisoformat(x) for x in s["t"]]
 
+        is_dual = str(s.get("analysis_mode", "")) == "dual"
+
         system_fig = build_system_figure(
 
             t,
@@ -778,41 +990,30 @@ def create_app() -> Flask:
 
         )
 
-        # 池子内全部用户数据：user_id, avg_rpm, max_rpm, p95_rpm, hit_count, reason
-
-        user_ids = s["user_ids"]
-
-        X = np_array(s["X"])
-
-        flags = np_bool_matrix(s["flags"])
-
-        records_by_uid = {r["user_id"]: r for r in s.get("records_json", [])}
-
-        all_users = []
-
-        for i, uid in enumerate(user_ids):
-
-            x = X[i]
-
-            rec = records_by_uid.get(uid, {})
-
-            all_users.append({
-
-                "user_id": uid,
-
-                "avg_rpm": float(np.mean(x)),
-
-                "max_rpm": float(np.max(x)),
-
-                "p95_rpm": float(np.quantile(x, 0.95)),
-
-                "hit_count": int(flags[i].sum()),
-
-                "reason": rec.get("reason", ""),
-
-            })
-
-        all_users.sort(key=lambda u: (-u["hit_count"], -u["max_rpm"]))
+        all_users: list[dict[str, Any]] = []
+        if is_dual:
+            all_users = list(s.get("records_json", []))
+            all_users.sort(key=lambda u: (-(int(u.get("hit_count_rpm", 0)) + int(u.get("hit_count_tpm", 0))), -float(u.get("max_rpm", 0.0))))
+        else:
+            # 池子内全部用户数据：user_id, avg_rpm, max_rpm, p95_rpm, hit_count, reason
+            user_ids = s["user_ids"]
+            X = np_array(s["X"])
+            flags = np_bool_matrix(s["flags"])
+            records_by_uid = {r["user_id"]: r for r in s.get("records_json", [])}
+            for i, uid in enumerate(user_ids):
+                x = X[i]
+                rec = records_by_uid.get(uid, {})
+                all_users.append(
+                    {
+                        "user_id": uid,
+                        "avg_rpm": float(np.mean(x)),
+                        "max_rpm": float(np.max(x)),
+                        "p95_rpm": float(np.quantile(x, 0.95)),
+                        "hit_count": int(flags[i].sum()),
+                        "reason": rec.get("reason", ""),
+                    }
+                )
+            all_users.sort(key=lambda u: (-u["hit_count"], -u["max_rpm"]))
 
         event_reports_view = _format_event_reports_with_time(s.get("event_reports", []), t)
 
@@ -838,6 +1039,7 @@ def create_app() -> Flask:
 
             event_reports=event_reports_view,
             rootcause_mode_label=rootcause_mode_label,
+            is_dual=is_dual,
 
             all_users=all_users,
 
@@ -871,22 +1073,17 @@ def create_app() -> Flask:
 
 
 
+        is_dual = str(s.get("analysis_mode", "")) == "dual"
         idx = user_ids.index(user_id)
 
         t = [datetime.fromisoformat(x) for x in s["t"]]
 
         x = np_array(s["X"])[idx]
-
         flags = np_bool_matrix(s["flags"])[idx]
-
         growth = np_array(s["growth"])[idx]
-
         abs_z = np_array(s["abs_z"])[idx]
-
         share_z = np_array(s["share_z"])[idx]
-
         sys_anom = np_bool(s["sys_anom"])
-
         sys_event_mask = np_bool(s["sys_event_mask"])
 
 
@@ -930,6 +1127,28 @@ def create_app() -> Flask:
         # Lookup summary row
 
         row = next((r for r in s["records_json"] if r["user_id"] == user_id), None)
+        row_dual = None
+        if is_dual:
+            row_rpm = next((r for r in s.get("records_json_rpm", []) if r["user_id"] == user_id), None)
+            row_tpm = next((r for r in s.get("records_json_tpm", []) if r["user_id"] == user_id), None)
+            x_rpm = np_array(s.get("X_rpm", s["X"]))[idx]
+            x_tpm = np_array(s.get("X_tpm", s["X"]))[idx]
+            flags_rpm = np_bool_matrix(s.get("flags_rpm", s["flags"]))[idx]
+            flags_tpm = np_bool_matrix(s.get("flags_tpm", s["flags"]))[idx]
+            row_dual = {
+                "hit_count_rpm": int(flags_rpm.sum()),
+                "hit_count_tpm": int(flags_tpm.sum()),
+                "avg_rpm": float(np.mean(x_rpm)),
+                "p95_rpm": float(np.quantile(x_rpm, 0.95)),
+                "max_rpm": float(np.max(x_rpm)),
+                "avg_tpm": float(np.mean(x_tpm)),
+                "p95_tpm": float(np.quantile(x_tpm, 0.95)),
+                "max_tpm": float(np.max(x_tpm)),
+                "reason_rpm": (row_rpm or {}).get("reason", ""),
+                "reason_tpm": (row_tpm or {}).get("reason", ""),
+                "hit_hours_rpm": (row_rpm or {}).get("hit_hours", ""),
+                "hit_hours_tpm": (row_tpm or {}).get("hit_hours", ""),
+            }
 
 
 
@@ -944,6 +1163,8 @@ def create_app() -> Flask:
             user_id=user_id,
 
             row=row,
+            row_dual=row_dual,
+            is_dual=is_dual,
 
             user_fig_html=user_fig_html,
 
@@ -980,8 +1201,14 @@ def create_app() -> Flask:
 
 
         ev = reports[event_idx]
-
-        recommendations = build_recommendations(ev)
+        is_dual = str(s.get("analysis_mode", "")) == "dual"
+        if is_dual:
+            culprits_for_advice = (ev.get("culprits_rpm", []) or []) + (ev.get("culprits_tpm", []) or [])
+            ev_for_advice = dict(ev)
+            ev_for_advice["culprits"] = culprits_for_advice
+            recommendations = build_recommendations(ev_for_advice)
+        else:
+            recommendations = build_recommendations(ev)
 
 
 
@@ -1012,6 +1239,7 @@ def create_app() -> Flask:
             event_idx=event_idx,
 
             ev=event_view,
+            is_dual=is_dual,
 
             start_dt=start_dt,
 
@@ -1280,12 +1508,16 @@ def _format_event_reports_with_time(event_reports: list[dict[str, Any]], t: list
         b = int(e.get("end_hour", -1))
 
         p = int(e.get("system_peak_hour", -1))
+        p_rpm = int(e.get("system_peak_hour_rpm", -1))
+        p_tpm = int(e.get("system_peak_hour_tpm", -1))
 
         e["start_time_label"] = t[a].strftime("%Y-%m-%d %H:%M") if 0 <= a < n else ""
 
         e["end_time_label"] = t[b].strftime("%Y-%m-%d %H:%M") if 0 <= b < n else ""
 
         e["system_peak_time_label"] = t[p].strftime("%Y-%m-%d %H:%M") if 0 <= p < n else ""
+        e["system_peak_time_label_rpm"] = t[p_rpm].strftime("%Y-%m-%d %H:%M") if 0 <= p_rpm < n else ""
+        e["system_peak_time_label_tpm"] = t[p_tpm].strftime("%Y-%m-%d %H:%M") if 0 <= p_tpm < n else ""
 
         culprits = []
 
@@ -1300,6 +1532,15 @@ def _format_event_reports_with_time(event_reports: list[dict[str, Any]], t: list
             culprits.append(c2)
 
         e["culprits"] = culprits
+
+        for key in ("culprits_rpm", "culprits_tpm"):
+            out_culprits = []
+            for c in e.get(key, []) or []:
+                c2 = dict(c)
+                ph = int(c2.get("peak_hour", -1))
+                c2["peak_time_label"] = t[ph].strftime("%Y-%m-%d %H:%M") if 0 <= ph < n else ""
+                out_culprits.append(c2)
+            e[key] = out_culprits
 
         out.append(e)
 

@@ -24,12 +24,73 @@
       <div class="small text-secondary mt-1">
         时间范围：<code>{{ start_dt }}</code> → <code>{{ end_dt }}</code>
       </div>
-      <div class="small text-secondary mt-1">
-        系统峰值：{{ ev.system_peak_time_label }}（{{ "%.0f"|format(ev.system_peak_rpm) }} RPM）
-      </div>
+      {% if is_dual %}
+        <div class="small text-secondary mt-1">事件类型：<code>{{ ev.rootcause_scope }}</code></div>
+        <div class="small text-secondary mt-1">RPM 峰值：{{ ev.system_peak_time_label_rpm }}（{{ "%.0f"|format(ev.system_peak_rpm) }}）</div>
+        <div class="small text-secondary mt-1">TPM 峰值：{{ ev.system_peak_time_label_tpm }}（{{ "%.0f"|format(ev.system_peak_tpm) }}）</div>
+      {% else %}
+        <div class="small text-secondary mt-1">
+          系统峰值：{{ ev.system_peak_time_label }}（{{ "%.0f"|format(ev.system_peak_rpm) }} RPM）
+        </div>
+      {% endif %}
       <hr />
-      <div class="small text-secondary mb-2">主因用户（按超额贡献）</div>
-      {% if ev.culprits and ev.culprits|length > 0 %}
+      {% if is_dual %}
+        <div class="small text-secondary mb-2">RPM 主因用户</div>
+        {% if ev.culprits_rpm and ev.culprits_rpm|length > 0 %}
+          <div class="table-responsive">
+            <table class="table table-sm align-middle">
+              <thead>
+                <tr class="text-secondary">
+                  <th>user_id</th>
+                  <th class="text-end">贡献占比</th>
+                  <th class="text-end">峰值</th>
+                  <th class="text-end">峰值小时</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for c in ev.culprits_rpm %}
+                  <tr>
+                    <td><code>{{ c.user_id }}</code></td>
+                    <td class="text-end">{{ "%.1f"|format(c.excess_ratio*100) }}%</td>
+                    <td class="text-end">{{ "%.0f"|format(c.peak_rpm) }}</td>
+                    <td class="text-end">{{ c.peak_time_label }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <div class="text-secondary small mb-2">未定位到 RPM 主因用户。</div>
+        {% endif %}
+        <div class="small text-secondary mb-2">TPM 主因用户</div>
+        {% if ev.culprits_tpm and ev.culprits_tpm|length > 0 %}
+          <div class="table-responsive">
+            <table class="table table-sm align-middle">
+              <thead>
+                <tr class="text-secondary">
+                  <th>user_id</th>
+                  <th class="text-end">贡献占比</th>
+                  <th class="text-end">峰值</th>
+                  <th class="text-end">峰值小时</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for c in ev.culprits_tpm %}
+                  <tr>
+                    <td><code>{{ c.user_id }}</code></td>
+                    <td class="text-end">{{ "%.1f"|format(c.excess_ratio*100) }}%</td>
+                    <td class="text-end">{{ "%.0f"|format(c.peak_rpm) }}</td>
+                    <td class="text-end">{{ c.peak_time_label }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <div class="text-secondary small">未定位到 TPM 主因用户。</div>
+        {% endif %}
+      {% elif ev.culprits and ev.culprits|length > 0 %}
+        <div class="small text-secondary mb-2">主因用户（按超额贡献）</div>
         <div class="table-responsive">
           <table class="table table-sm align-middle">
             <thead>

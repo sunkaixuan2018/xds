@@ -6,16 +6,21 @@
     <div class="col-lg-7">
       <div class="card shadow-sm">
         <div class="card-body">
-          <h5 class="card-title mb-2">选择本地文件进行检测</h5>
+          <h5 class="card-title mb-2">选择 RPM/TPM 双文件进行联合检测</h5>
           <p class="text-secondary mb-4">
-            上传 Excel（推荐：<code>fake_rpm_data.xlsx</code>）或同结构 CSV。每行是一个用户，列 <code>H0..H167</code> 表示 7 天按小时汇总的 RPM。
+            同时上传 RPM 与 TPM 文件（Excel/CSV）。两个文件的 sheet/列结构需一致：每行一个用户，列为小时序列（如 <code>H0..H167</code> 或具体时间列）。
           </p>
 
           <form action="{{ url_for('detect') }}" method="post" enctype="multipart/form-data">
             <div class="mb-3">
-              <label class="form-label">本地文件</label>
-              <input class="form-control" type="file" name="file" accept=".xlsx,.xls,.csv" required>
-              <div class="form-text">支持 <code>.xlsx</code>/<code>.csv</code>。Excel 默认读取 sheet <code>rpm</code>。</div>
+              <label class="form-label">RPM 文件</label>
+              <input class="form-control" type="file" name="file_rpm" accept=".xlsx,.xls,.csv" required>
+              <div class="form-text">支持 <code>.xlsx</code>/<code>.xls</code>/<code>.csv</code>。</div>
+            </div>
+            <div class="mb-3">
+              <label class="form-label">TPM 文件</label>
+              <input class="form-control" type="file" name="file_tpm" accept=".xlsx,.xls,.csv" required>
+              <div class="form-text">需与 RPM 文件保持相同列结构与时间列顺序。</div>
             </div>
 
             <div class="mb-3">
@@ -98,9 +103,12 @@
               </div>
             </div>
 
-            <button class="btn btn-primary btn-lg w-100" type="submit">开始检测</button>
+            <button class="btn btn-primary btn-lg w-100" type="submit">开始联合检测</button>
           </form>
         </div>
+      </div>
+      <div class="mt-3 text-center">
+        <a href="{{ url_for('pool_index') }}" class="text-secondary">按池子分析（上传聚合 Excel）</a>
       </div>
     </div>
 
@@ -109,8 +117,8 @@
         <div class="card-body">
           <h6 class="card-title">检测逻辑摘要</h6>
           <ul class="small text-secondary mb-0">
-            <li><b>系统事件</b>：先用“同小时历史中位数倍率（sys_ratio_threshold）”做主门槛，再用稳健 z 或增长斜率做确认，合并成事件窗口。</li>
-            <li><b>严格根因</b>：仅在事件窗口内定位主因用户（按超额贡献 excess 排序），窗口外默认不报用户异常。</li>
+            <li><b>系统事件</b>：RPM 与 TPM 各自检测后按并集合并事件窗口（任一异常即事件）。</li>
+            <li><b>根因定位</b>：仅 RPM 异常定位 RPM 根因；仅 TPM 异常定位 TPM 根因；两者异常同时定位。</li>
             <li><b>增长斜率</b>：小时环比增长率 \(g(t)=x(t)/(x(t-1)+1)-1\)（系统与用户都可用作辅助信号）。</li>
           </ul>
         </div>
