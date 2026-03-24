@@ -66,23 +66,19 @@
               </div>
             </div>
             <div class="mb-4">
-              <label class="form-label">大体量用户识别敏感度</label>
+              <label class="form-label">根因模式</label>
               <div class="d-flex gap-2 flex-wrap">
                 <div class="form-check form-check-inline">
-                  <input class="form-check-input" type="radio" name="major_tenant_sensitivity" id="major-tenant-high" value="high">
-                  <label class="form-check-label" for="major-tenant-high">高</label>
+                  <input class="form-check-input" type="radio" name="rootcause_mode" id="rootcause-strict" value="strict" checked>
+                  <label class="form-check-label" for="rootcause-strict">严格</label>
                 </div>
                 <div class="form-check form-check-inline">
-                  <input class="form-check-input" type="radio" name="major_tenant_sensitivity" id="major-tenant-medium" value="medium" checked>
-                  <label class="form-check-label" for="major-tenant-medium">中</label>
-                </div>
-                <div class="form-check form-check-inline">
-                  <input class="form-check-input" type="radio" name="major_tenant_sensitivity" id="major-tenant-low" value="low">
-                  <label class="form-check-label" for="major-tenant-low">低</label>
+                  <input class="form-check-input" type="radio" name="rootcause_mode" id="rootcause-loose" value="loose">
+                  <label class="form-check-label" for="rootcause-loose">宽松</label>
                 </div>
               </div>
               <div class="form-text">
-                仅影响大体量用户识别阈值：高=更容易识别，低=更保守；用于补充“贡献高但份额突变不明显”的用户判定。
+                严格：事件窗口内强制识别高贡献用户；宽松：仅在已有用户异常时才定位主因用户。
               </div>
             </div>
             <div class="mb-4">

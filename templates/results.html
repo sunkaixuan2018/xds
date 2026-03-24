@@ -69,7 +69,7 @@
 
   <div class="card shadow-sm mb-3">
     <div class="card-body">
-      <h6 class="mb-2">系统事件与主因用户（严格根因模式）</h6>
+      <h6 class="mb-2">系统事件与主因用户（{{ rootcause_mode_label }}根因模式）</h6>
       {% if event_reports and event_reports|length > 0 %}
         <div class="row g-3">
           {% for ev in event_reports %}

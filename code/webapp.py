@@ -636,12 +636,14 @@ def create_app() -> Flask:
 
             sensitivity = request.form.get("sensitivity", "medium").strip() or "medium"
             pool_sensitivity = request.form.get("pool_sensitivity", "medium").strip() or "medium"
-            major_tenant_sensitivity = request.form.get("major_tenant_sensitivity", "medium").strip() or "medium"
+            rootcause_mode = request.form.get("rootcause_mode", "strict").strip().lower() or "strict"
             max_events_option = request.form.get("max_events_option", "5").strip().lower()
+            if rootcause_mode not in {"strict", "loose"}:
+                rootcause_mode = "strict"
 
             cfg = _detector_config_for_sensitivity(sensitivity)
             cfg = _apply_pool_sensitivity(cfg, pool_sensitivity)
-            cfg = _apply_major_tenant_sensitivity(cfg, major_tenant_sensitivity)
+            cfg = replace(cfg, rootcause_mode=rootcause_mode)
             if max_events_option == "all":
                 cfg = replace(cfg, max_events=0)
             else:
@@ -814,6 +816,8 @@ def create_app() -> Flask:
 
         event_reports_view = _format_event_reports_with_time(s.get("event_reports", []), t)
 
+        rootcause_mode_label = "严格" if str(s.get("cfg", {}).get("rootcause_mode", "strict")).lower() == "strict" else "宽松"
+
         return render_template(
 
             "results.html",
@@ -833,6 +837,7 @@ def create_app() -> Flask:
             records=s["records_json"][:200],
 
             event_reports=event_reports_view,
+            rootcause_mode_label=rootcause_mode_label,
 
             all_users=all_users,
 

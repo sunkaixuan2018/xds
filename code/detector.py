@@ -55,6 +55,10 @@ class DetectorConfig:
     abs_z_episode: float = 2.5  # episode mask threshold for peak backfill
     # Strict mode: only label users inside system events
     strict_rootcause: bool = True
+    # Root-cause mode for culprit localization and contribution-based forcing:
+    # - strict: force major contributors in event windows to be labeled
+    # - loose: only localize among already flagged users; no forced labeling
+    rootcause_mode: str = "strict"
     # Culprit selection: keep top users until cumulative_excess_ratio reached
     culprit_top_k: int = 2
     culprit_cum_ratio: float = 0.7
@@ -456,9 +460,16 @@ def detect_anomalies(
     # Culprit localization by excess contribution inside each event window（仅从未被判定为正常的用户中识别：事件窗口内至少有一个异常点）
     event_reports: list[dict[str, Any]] = []
     event_contrib_flags = np.zeros_like(flags, dtype=bool)
+    rootcause_mode = str(getattr(cfg, "rootcause_mode", "strict")).strip().lower()
+    force_contrib = rootcause_mode == "strict"
     for (a, b) in events:
         excess = np.clip(X[:, a : b + 1] - mu_abs[:, a : b + 1], 0, None)
         excess_sum_user = excess.sum(axis=1)
+        if not force_contrib:
+            # Loose mode: only localize culprits among users already flagged
+            # by anomaly rules in this event window.
+            anom_in_window = np.array([bool(flags[i, a : b + 1].any()) for i in range(X.shape[0])], dtype=bool)
+            excess_sum_user = np.where(anom_in_window, excess_sum_user, 0.0)
         total_excess = float(excess_sum_user.sum())
 
         selected: list[tuple[int, float]] = []
@@ -478,16 +489,17 @@ def detect_anomalies(
 
             # Contribution-based user trigger within event window:
             # mark each major contributor's peak hour in this window as anomalous.
-            for idx in order:
-                val = float(excess_sum_user[idx])
-                if val <= 0:
-                    break
-                ratio_user = val / total_excess
-                if ratio_user < cfg.event_contrib_ratio_trigger:
-                    continue
-                local = X[idx, a : b + 1]
-                peak_h = a + int(np.argmax(local))
-                event_contrib_flags[idx, peak_h] = True
+            if force_contrib:
+                for idx in order:
+                    val = float(excess_sum_user[idx])
+                    if val <= 0:
+                        break
+                    ratio_user = val / total_excess
+                    if ratio_user < cfg.event_contrib_ratio_trigger:
+                        continue
+                    local = X[idx, a : b + 1]
+                    peak_h = a + int(np.argmax(local))
+                    event_contrib_flags[idx, peak_h] = True
 
         culprits = []
         for (idx, val) in selected:
@@ -518,7 +530,8 @@ def detect_anomalies(
         )
 
     # Merge contribution-based flags (event-only) into final user flags.
-    flags = flags | event_contrib_flags
+    if force_contrib:
+        flags = flags | event_contrib_flags
 
     # System stats
     system_stats = {
