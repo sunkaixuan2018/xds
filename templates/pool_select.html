@@ -85,6 +85,16 @@
                 仅影响大体量用户识别阈值：高=更容易识别，低=更保守；用于补充“贡献高但份额突变不明显”的用户判定。
               </div>
             </div>
+            <div class="mb-4">
+              <label class="form-label">系统事件保留数量（max_events）</label>
+              <select class="form-select" name="max_events_option">
+                <option value="2">2</option>
+                <option value="5" selected>5</option>
+                <option value="10">10</option>
+                <option value="all">all（不裁剪）</option>
+              </select>
+              <div class="form-text">控制系统事件窗口保留上限。all 表示不做 Top-N 裁剪。</div>
+            </div>
             <button class="btn btn-primary btn-lg w-100" type="submit">分析该池子用户异常</button>
           </form>
         </div>

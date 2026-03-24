@@ -637,10 +637,18 @@ def create_app() -> Flask:
             sensitivity = request.form.get("sensitivity", "medium").strip() or "medium"
             pool_sensitivity = request.form.get("pool_sensitivity", "medium").strip() or "medium"
             major_tenant_sensitivity = request.form.get("major_tenant_sensitivity", "medium").strip() or "medium"
+            max_events_option = request.form.get("max_events_option", "5").strip().lower()
 
             cfg = _detector_config_for_sensitivity(sensitivity)
             cfg = _apply_pool_sensitivity(cfg, pool_sensitivity)
             cfg = _apply_major_tenant_sensitivity(cfg, major_tenant_sensitivity)
+            if max_events_option == "all":
+                cfg = replace(cfg, max_events=0)
+            else:
+                try:
+                    cfg = replace(cfg, max_events=int(max_events_option))
+                except Exception:
+                    cfg = replace(cfg, max_events=5)
 
             res = detect_anomalies(cfg, df, h_cols)
 
