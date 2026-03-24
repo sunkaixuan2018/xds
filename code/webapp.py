@@ -1717,6 +1717,7 @@ def _format_event_reports_with_time(event_reports: list[dict[str, Any]], t: list
 _CHART_WIDTH = 980
 
 _CHART_MARGIN = dict(l=52, r=32, t=60, b=44)
+_DUAL_X_DOMAIN = [0.08, 0.92]
 
 
 
@@ -2006,7 +2007,11 @@ def build_system_dual_figure(
 
     fig.update_yaxes(title_text="RPM", secondary_y=False)
     fig.update_yaxes(title_text="TPM", secondary_y=True)
-    fig.update_xaxes(title_text="时间")
+    x_end = (t[-1] + timedelta(hours=1)) if t else None
+    if t:
+        fig.update_xaxes(title_text="时间", range=[t[0], x_end])
+    else:
+        fig.update_xaxes(title_text="时间")
     # Keep dual charts aligned with user chart horizontally.
     fig.update_xaxes(automargin=False)
     fig.update_yaxes(automargin=False, secondary_y=False)
@@ -2018,6 +2023,10 @@ def build_system_dual_figure(
         height=500,
         margin=_CHART_MARGIN,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        # Force identical plotting area for all dual-axis charts.
+        xaxis=dict(domain=_DUAL_X_DOMAIN),
+        yaxis=dict(anchor="x", side="left", position=0.0),
+        yaxis2=dict(anchor="x", overlaying="y", side="right", position=1.0),
     )
     return fig
 
@@ -2193,7 +2202,11 @@ def build_user_dual_figure(
 
     fig.update_yaxes(title_text="RPM", secondary_y=False)
     fig.update_yaxes(title_text="TPM", secondary_y=True)
-    fig.update_xaxes(title_text="时间")
+    x_end = (t[-1] + timedelta(hours=1)) if t else None
+    if t:
+        fig.update_xaxes(title_text="时间", range=[t[0], x_end])
+    else:
+        fig.update_xaxes(title_text="时间")
     fig.update_xaxes(automargin=False)
     fig.update_yaxes(automargin=False, secondary_y=False)
     fig.update_yaxes(automargin=False, secondary_y=True)
@@ -2204,6 +2217,10 @@ def build_user_dual_figure(
         height=500,
         margin=_CHART_MARGIN,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        # Force identical plotting area for all dual-axis charts.
+        xaxis=dict(domain=_DUAL_X_DOMAIN),
+        yaxis=dict(anchor="x", side="left", position=0.0),
+        yaxis2=dict(anchor="x", overlaying="y", side="right", position=1.0),
     )
     return fig
 
