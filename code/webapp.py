@@ -293,23 +293,17 @@ def create_app() -> Flask:
 
     def index():
 
-        default_start = datetime.now().replace(minute=0, second=0, microsecond=0).isoformat(timespec="minutes")
-        return render_template("index.html", default_start=default_start, defaults=asdict(DetectorConfig()))
+        return render_template("pool_upload.html")
 
 
 
     @app.post("/detect")
 
     def detect():
+        flash("首页“上传文件检测”入口已废弃，请使用按池子分析（上传 RPM+TPM 双文件）。", "warning")
+        return redirect(url_for("pool_index"))
 
-        f_rpm = request.files.get("file_rpm")
-        f_tpm = request.files.get("file_tpm")
-
-        if not f_rpm or not f_rpm.filename or not f_tpm or not f_tpm.filename:
-
-            flash("请同时上传 RPM 与 TPM 两个文件。", "danger")
-
-            return redirect(url_for("index"))
+    # ---------- 池子分析流程：上传 RPM/TPM 聚合 Excel -> 选 sheet -> 联合分析 ----------
 
 
 
@@ -696,8 +690,6 @@ def create_app() -> Flask:
 
 
 
-    # ---------- 池子分析流程：上传 result Excel -> 选 sheet -> 分析该池子用户异常 ----------
-
     @app.get("/pool")
 
     def pool_index():
@@ -710,35 +702,41 @@ def create_app() -> Flask:
 
     def pool_upload():
 
-        f = request.files.get("file")
+        f_rpm = request.files.get("file_rpm")
+        f_tpm = request.files.get("file_tpm")
 
-        if not f or not f.filename:
+        if not f_rpm or not f_rpm.filename or not f_tpm or not f_tpm.filename:
 
-            flash("请先选择 result 目录下生成的 Excel 文件（.xlsx）。", "danger")
-
-            return redirect(url_for("pool_index"))
-
-        if not (f.filename.lower().endswith(".xlsx") or f.filename.lower().endswith(".xls")):
-
-            flash("请上传 Excel 文件（.xlsx / .xls）。", "danger")
+            flash("请同时上传 RPM 与 TPM 两个聚合 Excel 文件。", "danger")
 
             return redirect(url_for("pool_index"))
 
-        filename = secure_filename(f.filename)
+        if not (f_rpm.filename.lower().endswith(".xlsx") or f_rpm.filename.lower().endswith(".xls")):
+            flash("RPM 文件格式不正确，请上传 Excel（.xlsx / .xls）。", "danger")
+            return redirect(url_for("pool_index"))
+        if not (f_tpm.filename.lower().endswith(".xlsx") or f_tpm.filename.lower().endswith(".xls")):
+            flash("TPM 文件格式不正确，请上传 Excel（.xlsx / .xls）。", "danger")
+            return redirect(url_for("pool_index"))
+
+        filename_rpm = secure_filename(f_rpm.filename)
+        filename_tpm = secure_filename(f_tpm.filename)
 
         upload_id = uuid.uuid4().hex
 
-        saved_path = UPLOAD_DIR / f"pool_{upload_id}__{filename}"
+        saved_path_rpm = UPLOAD_DIR / f"pool_{upload_id}__rpm__{filename_rpm}"
+        saved_path_tpm = UPLOAD_DIR / f"pool_{upload_id}__tpm__{filename_tpm}"
 
-        f.save(saved_path)
+        f_rpm.save(saved_path_rpm)
+        f_tpm.save(saved_path_tpm)
 
         try:
 
-            xl = pd.ExcelFile(saved_path)
-
-            sheet_names = xl.sheet_names
-
-            xl.close()
+            xl_rpm = pd.ExcelFile(saved_path_rpm)
+            xl_tpm = pd.ExcelFile(saved_path_tpm)
+            sheets_rpm = xl_rpm.sheet_names
+            sheets_tpm = xl_tpm.sheet_names
+            xl_rpm.close()
+            xl_tpm.close()
 
         except Exception as e:
 
@@ -746,19 +744,22 @@ def create_app() -> Flask:
 
             return redirect(url_for("pool_index"))
 
+        sheet_names = sorted(set(sheets_rpm).intersection(set(sheets_tpm)))
         if not sheet_names:
 
-            flash("该 Excel 中没有任何 sheet。", "danger")
+            flash("RPM 与 TPM 文件没有共同 sheet，无法联合分析。", "danger")
 
             return redirect(url_for("pool_index"))
 
         app.config["POOL_UPLOADS"][upload_id] = {
 
-            "file_path": str(saved_path),
+            "file_path_rpm": str(saved_path_rpm),
+            "file_path_tpm": str(saved_path_tpm),
 
             "sheet_names": sheet_names,
 
-            "file_name": filename,
+            "file_name_rpm": filename_rpm,
+            "file_name_tpm": filename_tpm,
 
         }
 
@@ -784,7 +785,7 @@ def create_app() -> Flask:
 
             upload_id=upload_id,
 
-            file_name=info["file_name"],
+            file_name=f"RPM={info['file_name_rpm']} ; TPM={info['file_name_tpm']}",
 
             sheet_names=info["sheet_names"],
 
@@ -816,21 +817,38 @@ def create_app() -> Flask:
 
         try:
 
-            # 整表先按字符串读，避免首列(用户ID)被 Excel/引擎推断为数字导致显示 0.0；时间列后续在 validate_and_prepare 里会转成数值
+            # 整表先按字符串读，避免首列(用户ID)被 Excel/引擎推断为数字导致显示 0.0；
+            # 时间列后续在 validate_and_prepare 里会转成数值
+            df_rpm = pd.read_excel(info["file_path_rpm"], sheet_name=sheet_name, dtype=str)
+            df_tpm = pd.read_excel(info["file_path_tpm"], sheet_name=sheet_name, dtype=str)
 
-            df = pd.read_excel(info["file_path"], sheet_name=sheet_name, dtype=str)
+            df_rpm.columns = [str(c) for c in df_rpm.columns]
+            df_tpm.columns = [str(c) for c in df_tpm.columns]
+            df_rpm.iloc[:, 0] = df_rpm.iloc[:, 0].fillna("").astype(str)
+            df_tpm.iloc[:, 0] = df_tpm.iloc[:, 0].fillna("").astype(str)
 
-            df.columns = [str(c) for c in df.columns]
+            if df_rpm.shape[0] == 0 or df_rpm.shape[1] < 25 or df_tpm.shape[0] == 0 or df_tpm.shape[1] < 25:
+                raise ValueError("RPM/TPM 该 sheet 行数或列数不足（至少一列用户标识 + 24 列时间）。")
 
-            # 空单元格会读成 NaN 字符串或空，首列统一为字符串
+            df_rpm, h_cols_rpm = validate_and_prepare(df_rpm)
+            df_tpm, h_cols_tpm = validate_and_prepare(df_tpm)
+            if h_cols_rpm != h_cols_tpm:
+                raise ValueError("RPM 与 TPM 该 sheet 的时间列不一致。")
+            h_cols = h_cols_rpm
 
-            df.iloc[:, 0] = df.iloc[:, 0].fillna("").astype(str)
-
-            if df.shape[0] == 0 or df.shape[1] < 25:
-
-                raise ValueError("该 sheet 行数或列数不足（需要至少一列用户标识 + 24 列时间）。")
-
-            df, h_cols = validate_and_prepare(df)
+            rpm_uid = df_rpm["user_id"].astype(str)
+            tpm_uid = df_tpm["user_id"].astype(str)
+            shared = [u for u in rpm_uid.tolist() if u in set(tpm_uid.tolist())]
+            if not shared:
+                raise ValueError("RPM 与 TPM 该 sheet 没有共同用户，无法联合分析。")
+            if len(shared) < len(rpm_uid) or len(shared) < len(tpm_uid):
+                flash(f"RPM/TPM 用户集合不完全一致，已按交集 {len(shared)} 个用户联合分析。", "warning")
+            df_rpm = df_rpm[df_rpm["user_id"].astype(str).isin(shared)].copy()
+            df_tpm = df_tpm[df_tpm["user_id"].astype(str).isin(shared)].copy()
+            df_rpm["__order"] = pd.Categorical(df_rpm["user_id"].astype(str), categories=shared, ordered=True)
+            df_tpm["__order"] = pd.Categorical(df_tpm["user_id"].astype(str), categories=shared, ordered=True)
+            df_rpm = df_rpm.sort_values("__order").drop(columns="__order").reset_index(drop=True)
+            df_tpm = df_tpm.sort_values("__order").drop(columns="__order").reset_index(drop=True)
 
             # 起始时间从第一个时间列名解析，如 "2026-01-18 16:00"
 
@@ -862,7 +880,8 @@ def create_app() -> Flask:
                 except Exception:
                     cfg = replace(cfg, max_events=5)
 
-            res = detect_anomalies(cfg, df, h_cols)
+            res_rpm = detect_anomalies(cfg, df_rpm, h_cols)
+            res_tpm = detect_anomalies(cfg, df_tpm, h_cols)
 
             hours = len(h_cols)
 
@@ -872,17 +891,17 @@ def create_app() -> Flask:
 
                 t,
 
-                res["S"],
+                res_rpm["S"],
 
-                res["system_median"],
+                res_rpm["system_median"],
 
-                res["system_ratio"],
+                res_rpm["system_ratio"],
 
-                res["sys_anom"],
+                res_rpm["sys_anom"],
 
-                res["sys_event_mask"],
+                res_rpm["sys_event_mask"],
 
-                res["events"],
+                res_rpm["events"],
 
                 cfg.sys_ratio_threshold,
 
@@ -890,55 +909,182 @@ def create_app() -> Flask:
 
             system_fig_html = pio.to_html(system_fig, full_html=False, include_plotlyjs="inline")
 
+            # 联合事件：RPM/TPM 事件掩码并集
+            mask_rpm = np.asarray(res_rpm["sys_event_mask"], dtype=bool)
+            mask_tpm = np.asarray(res_tpm["sys_event_mask"], dtype=bool)
+            sys_event_mask_joint = mask_rpm | mask_tpm
+            events_joint = _events_from_mask(sys_event_mask_joint, cfg.event_min_len, cfg.event_merge_gap)
+
+            reports_rpm = res_rpm.get("event_reports", [])
+            reports_tpm = res_tpm.get("event_reports", [])
+            event_reports_joint: list[dict[str, Any]] = []
+            for (a, b) in events_joint:
+                rpm_active = bool(np.asarray(res_rpm["sys_anom"], dtype=bool)[a : b + 1].any())
+                tpm_active = bool(np.asarray(res_tpm["sys_anom"], dtype=bool)[a : b + 1].any())
+                scope = "both" if (rpm_active and tpm_active) else ("rpm_only" if rpm_active else "tpm_only")
+
+                best_rpm = None
+                if rpm_active and reports_rpm:
+                    best_rpm = max(
+                        reports_rpm,
+                        key=lambda ev: _overlap_len(a, b, int(ev.get("start_hour", -1)), int(ev.get("end_hour", -1))),
+                    )
+                best_tpm = None
+                if tpm_active and reports_tpm:
+                    best_tpm = max(
+                        reports_tpm,
+                        key=lambda ev: _overlap_len(a, b, int(ev.get("start_hour", -1)), int(ev.get("end_hour", -1))),
+                    )
+                culprits_rpm = (best_rpm or {}).get("culprits", []) if rpm_active else []
+                culprits_tpm = (best_tpm or {}).get("culprits", []) if tpm_active else []
+                culprits_primary = culprits_rpm if culprits_rpm else culprits_tpm
+                event_reports_joint.append(
+                    {
+                        "start_hour": int(a),
+                        "end_hour": int(b),
+                        "duration_hours": int(b - a + 1),
+                        "rootcause_scope": scope,
+                        "system_peak_hour_rpm": int(a + int(np.argmax(np.asarray(res_rpm["S"])[a : b + 1]))),
+                        "system_peak_rpm": float(np.max(np.asarray(res_rpm["S"])[a : b + 1])),
+                        "system_peak_hour_tpm": int(a + int(np.argmax(np.asarray(res_tpm["S"])[a : b + 1]))),
+                        "system_peak_tpm": float(np.max(np.asarray(res_tpm["S"])[a : b + 1])),
+                        "culprits_rpm": culprits_rpm,
+                        "culprits_tpm": culprits_tpm,
+                        "culprits": culprits_primary,
+                        "system_peak_hour": int(a + int(np.argmax(np.asarray(res_rpm["S"])[a : b + 1]))),
+                    }
+                )
+
+            stats_rpm = res_rpm["system_stats"]
+            stats_tpm = res_tpm["system_stats"]
+            system_stats_joint = {
+                "hours": int(len(h_cols)),
+                "event_count": int(len(events_joint)),
+                "event_hours_count": int(np.asarray(sys_event_mask_joint, dtype=bool).sum()),
+                "rpm": {
+                    "system_avg": float(stats_rpm.get("system_avg", 0.0)),
+                    "system_p95": float(stats_rpm.get("system_p95", 0.0)),
+                    "system_max": float(stats_rpm.get("system_max", 0.0)),
+                    "system_anom_hours_count": int(stats_rpm.get("system_anom_hours_count", 0)),
+                },
+                "tpm": {
+                    "system_avg": float(stats_tpm.get("system_avg", 0.0)),
+                    "system_p95": float(stats_tpm.get("system_p95", 0.0)),
+                    "system_max": float(stats_tpm.get("system_max", 0.0)),
+                    "system_anom_hours_count": int(stats_tpm.get("system_anom_hours_count", 0)),
+                },
+            }
+
+            rec_rpm_by_uid = {r["user_id"]: r for r in res_rpm["records"].to_dict(orient="records")}
+            rec_tpm_by_uid = {r["user_id"]: r for r in res_tpm["records"].to_dict(orient="records")}
+            user_ids = res_rpm["user_ids"]
+            records_joint = []
+            for i, uid in enumerate(user_ids):
+                rr = rec_rpm_by_uid.get(uid, {})
+                rt = rec_tpm_by_uid.get(uid, {})
+                hit_rpm = int(np.asarray(res_rpm["flags"], dtype=bool)[i].sum())
+                hit_tpm = int(np.asarray(res_tpm["flags"], dtype=bool)[i].sum())
+                records_joint.append(
+                    {
+                        "user_id": uid,
+                        "hit_count_rpm": hit_rpm,
+                        "hit_count_tpm": hit_tpm,
+                        "hit_count_any": int(hit_rpm > 0 or hit_tpm > 0),
+                        "avg_rpm": float(np.mean(np.asarray(res_rpm["X"])[i])),
+                        "p95_rpm": float(np.quantile(np.asarray(res_rpm["X"])[i], 0.95)),
+                        "max_rpm": float(np.max(np.asarray(res_rpm["X"])[i])),
+                        "avg_tpm": float(np.mean(np.asarray(res_tpm["X"])[i])),
+                        "p95_tpm": float(np.quantile(np.asarray(res_tpm["X"])[i], 0.95)),
+                        "max_tpm": float(np.max(np.asarray(res_tpm["X"])[i])),
+                        "reason_rpm": rr.get("reason", ""),
+                        "reason_tpm": rt.get("reason", ""),
+                        "hit_hours_rpm": rr.get("hit_hours", ""),
+                        "hit_hours_tpm": rt.get("hit_hours", ""),
+                    }
+                )
+            records_joint.sort(key=lambda x: (-(x["hit_count_rpm"] + x["hit_count_tpm"]), -x["max_rpm"], -x["max_tpm"]))
+
             session_id = uuid.uuid4().hex
 
             app.config["SESSIONS"][session_id] = {
 
                 "created_at": datetime.now(timezone.utc).isoformat(),
 
-                "file_name": f"{info['file_name']} (池子: {sheet_name})",
+                "file_name": f"RPM={info['file_name_rpm']} ; TPM={info['file_name_tpm']} (池子: {sheet_name})",
 
-                "saved_path": info["file_path"],
+                "saved_path": info["file_path_rpm"],
+                "saved_path_rpm": info["file_path_rpm"],
+                "saved_path_tpm": info["file_path_tpm"],
 
                 "start_time": start_time.isoformat(timespec="minutes"),
 
                 "cfg": asdict(cfg),
+                "analysis_mode": "dual",
 
                 "t": [dt.isoformat() for dt in t],
 
                 "h_cols": h_cols,
 
-                "S": res["S"].tolist(),
+                "S": res_rpm["S"].tolist(),
+                "S_rpm": res_rpm["S"].tolist(),
+                "S_tpm": res_tpm["S"].tolist(),
 
-                "system_median": np.asarray(res["system_median"], dtype=float).tolist(),
+                "system_median": np.asarray(res_rpm["system_median"], dtype=float).tolist(),
+                "system_median_rpm": np.asarray(res_rpm["system_median"], dtype=float).tolist(),
+                "system_median_tpm": np.asarray(res_tpm["system_median"], dtype=float).tolist(),
 
-                "system_ratio": np.asarray(res["system_ratio"], dtype=float).tolist(),
+                "system_ratio": np.asarray(res_rpm["system_ratio"], dtype=float).tolist(),
+                "system_ratio_rpm": np.asarray(res_rpm["system_ratio"], dtype=float).tolist(),
+                "system_ratio_tpm": np.asarray(res_tpm["system_ratio"], dtype=float).tolist(),
 
-                "sys_anom": res["sys_anom"].astype(bool).tolist(),
+                "sys_anom": res_rpm["sys_anom"].astype(bool).tolist(),
+                "sys_anom_rpm": res_rpm["sys_anom"].astype(bool).tolist(),
+                "sys_anom_tpm": res_tpm["sys_anom"].astype(bool).tolist(),
 
-                "sys_event_mask": res["sys_event_mask"].astype(bool).tolist(),
+                "sys_event_mask": np.asarray(sys_event_mask_joint, dtype=bool).tolist(),
+                "sys_event_mask_rpm": res_rpm["sys_event_mask"].astype(bool).tolist(),
+                "sys_event_mask_tpm": res_tpm["sys_event_mask"].astype(bool).tolist(),
 
-                "events": res["events"],
+                "events": events_joint,
+                "events_rpm": res_rpm["events"],
+                "events_tpm": res_tpm["events"],
 
-                "event_reports": res["event_reports"],
+                "event_reports": event_reports_joint,
+                "event_reports_rpm": res_rpm["event_reports"],
+                "event_reports_tpm": res_tpm["event_reports"],
 
-                "user_ids": res["user_ids"],
+                "user_ids": user_ids,
 
-                "records_csv": res["records"].to_csv(index=False, encoding="utf-8"),
+                "records_csv": pd.DataFrame.from_records(records_joint).to_csv(index=False, encoding="utf-8"),
 
-                "records_json": res["records"].to_dict(orient="records"),
+                "records_json": records_joint,
+                "records_json_rpm": res_rpm["records"].to_dict(orient="records"),
+                "records_json_tpm": res_tpm["records"].to_dict(orient="records"),
 
-                "system_stats": res["system_stats"],
+                "system_stats": system_stats_joint,
+                "system_stats_rpm": stats_rpm,
+                "system_stats_tpm": stats_tpm,
 
-                "X": res["X"].tolist(),
+                "X": res_rpm["X"].tolist(),
+                "X_rpm": res_rpm["X"].tolist(),
+                "X_tpm": res_tpm["X"].tolist(),
 
-                "flags": res["flags"].astype(bool).tolist(),
+                "flags": np.asarray(res_rpm["flags"], dtype=bool).tolist(),
+                "flags_rpm": np.asarray(res_rpm["flags"], dtype=bool).tolist(),
+                "flags_tpm": np.asarray(res_tpm["flags"], dtype=bool).tolist(),
+                "flags_any": (np.asarray(res_rpm["flags"], dtype=bool) | np.asarray(res_tpm["flags"], dtype=bool)).tolist(),
 
-                "growth": res["growth"].tolist(),
+                "growth": res_rpm["growth"].tolist(),
+                "growth_rpm": res_rpm["growth"].tolist(),
+                "growth_tpm": res_tpm["growth"].tolist(),
 
-                "abs_z": res["abs_z"].tolist(),
+                "abs_z": res_rpm["abs_z"].tolist(),
+                "abs_z_rpm": res_rpm["abs_z"].tolist(),
+                "abs_z_tpm": res_tpm["abs_z"].tolist(),
 
-                "share_z": res["share_z"].tolist(),
+                "share_z": res_rpm["share_z"].tolist(),
+                "share_z_rpm": res_rpm["share_z"].tolist(),
+                "share_z_tpm": res_tpm["share_z"].tolist(),
 
             }
 

@@ -8,7 +8,7 @@
         <div class="card-body">
           <h5 class="card-title mb-2">选择要分析的池子与 service</h5>
           <p class="text-secondary mb-4">
-            当前文件：<strong>{{ file_name }}</strong>，共 <strong>{{ sheet_names|length }}</strong> 个数据表（sheet）。
+            当前文件：<strong>{{ file_name }}</strong>，共 <strong>{{ sheet_names|length }}</strong> 个共同数据表（sheet）。
             请先选<strong>池子</strong>，再选该池子下的<strong>某个 service_name</strong>，或<strong>全部合计</strong>（多 service 时由聚合脚本生成）。
             命名约定：<code>池子键__服务名</code>，全部合计为 <code>池子键__ALL</code>（与 <code>code/aggregate_pool_hours.py</code> 输出一致）。
           </p>
@@ -91,14 +91,12 @@
               </select>
               <div class="form-text">控制系统事件窗口保留上限。all 表示不做 Top-N 裁剪。</div>
             </div>
-            <button class="btn btn-primary btn-lg w-100" type="submit">分析该池子用户异常</button>
+            <button class="btn btn-primary btn-lg w-100" type="submit">联合分析该池子（RPM+TPM）</button>
           </form>
         </div>
       </div>
       <div class="mt-3 text-center">
         <a href="{{ url_for('pool_index') }}" class="text-secondary">重新上传其他 Excel</a>
-        &nbsp;·&nbsp;
-        <a href="{{ url_for('index') }}" class="text-secondary">返回首页</a>
       </div>
     </div>
   </div>
