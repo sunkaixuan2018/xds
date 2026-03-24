@@ -2007,11 +2007,15 @@ def build_system_dual_figure(
     fig.update_yaxes(title_text="RPM", secondary_y=False)
     fig.update_yaxes(title_text="TPM", secondary_y=True)
     fig.update_xaxes(title_text="时间")
+    # Keep dual charts aligned with user chart horizontally.
+    fig.update_xaxes(automargin=False)
+    fig.update_yaxes(automargin=False, secondary_y=False)
+    fig.update_yaxes(automargin=False, secondary_y=True)
     fig.update_layout(
         title="系统总量时序（RPM/TPM 双轴）",
         template="plotly_white",
         width=_CHART_WIDTH,
-        height=480,
+        height=500,
         margin=_CHART_MARGIN,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
     )
@@ -2190,11 +2194,14 @@ def build_user_dual_figure(
     fig.update_yaxes(title_text="RPM", secondary_y=False)
     fig.update_yaxes(title_text="TPM", secondary_y=True)
     fig.update_xaxes(title_text="时间")
+    fig.update_xaxes(automargin=False)
+    fig.update_yaxes(automargin=False, secondary_y=False)
+    fig.update_yaxes(automargin=False, secondary_y=True)
     fig.update_layout(
         title="用户时序（RPM/TPM 双轴）",
         template="plotly_white",
         width=_CHART_WIDTH,
-        height=460,
+        height=500,
         margin=_CHART_MARGIN,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
     )
