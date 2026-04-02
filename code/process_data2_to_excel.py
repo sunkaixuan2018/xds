@@ -193,9 +193,11 @@ def build_output_frames(df: pd.DataFrame) -> list[tuple[str, pd.DataFrame]]:
 
 def write_excel(frames: list[tuple[str, pd.DataFrame]], output_path: Path) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
+    temp_path = output_path.with_name(f"{output_path.stem}.tmp{output_path.suffix}")
+    with pd.ExcelWriter(temp_path, engine="openpyxl") as writer:
         for sheet_name, frame in frames:
             frame.to_excel(writer, sheet_name=sheet_name, index=False)
+    temp_path.replace(output_path)
     print(f"[ok] wrote {output_path}")
     return output_path
 
