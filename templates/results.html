@@ -23,18 +23,18 @@
     <div class="col-md-3">
       <div class="card stat-card shadow-sm">
         <div class="card-body">
-          <div class="stat-label">TTFT 平均值</div>
+          <div class="stat-label">TTFT 平均值 (ms)</div>
           <div class="stat-value">{{ "%.2f"|format(system_stats.ttft.system_avg) }}</div>
-          <div class="stat-sub text-secondary">SLA={{ "%.2f"|format(system_stats.ttft.sla) }}</div>
+          <div class="stat-sub text-secondary">SLA={{ "%.2f"|format(system_stats.ttft.sla) }} ms</div>
         </div>
       </div>
     </div>
     <div class="col-md-3">
       <div class="card stat-card shadow-sm">
         <div class="card-body">
-          <div class="stat-label">TPOT 平均值</div>
+          <div class="stat-label">TPOT 平均值 (ms)</div>
           <div class="stat-value">{{ "%.2f"|format(system_stats.tpot.system_avg) }}</div>
-          <div class="stat-sub text-secondary">SLA={{ "%.2f"|format(system_stats.tpot.sla) }}</div>
+          <div class="stat-sub text-secondary">SLA={{ "%.2f"|format(system_stats.tpot.sla) }} ms</div>
         </div>
       </div>
     </div>
@@ -81,10 +81,10 @@
                 </div>
                 <div class="small text-secondary mt-1">事件类型：<code>{{ ev.rootcause_scope }}</code></div>
                 <div class="small text-secondary mt-1">
-                  TTFT 峰值：{{ ev.system_peak_time_label_ttft }}（{{ "%.2f"|format(ev.system_peak_ttft) }}）
+                  TTFT 峰值：{{ ev.system_peak_time_label_ttft }}（{{ "%.2f"|format(ev.system_peak_ttft) }} ms）
                 </div>
                 <div class="small text-secondary mt-1">
-                  TPOT 峰值：{{ ev.system_peak_time_label_tpot }}（{{ "%.2f"|format(ev.system_peak_tpot) }}）
+                  TPOT 峰值：{{ ev.system_peak_time_label_tpot }}（{{ "%.2f"|format(ev.system_peak_tpot) }} ms）
                 </div>
                 <div class="mt-2">
                   {% if ev.culprits and ev.culprits|length > 0 %}
@@ -124,8 +124,8 @@
               <tr class="text-secondary">
                 <th>用户</th>
                 <th class="text-end">命中数</th>
-                <th class="text-end">均值 TTFT</th>
-                <th class="text-end">均值 TPOT</th>
+                <th class="text-end">均值 TTFT (ms)</th>
+                <th class="text-end">均值 TPOT (ms)</th>
                 <th class="text-end">均值 RPM</th>
                 <th class="text-end">均值 TPM</th>
                 <th class="text-end">均值输入</th>
@@ -165,7 +165,7 @@
       <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
         <h6 class="mb-0">Top 根因用户</h6>
         <div class="small text-secondary">
-          severe_ratio={{ cfg.severe_ratio }} · ttft_sla={{ cfg.ttft_sla }} · tpot_sla={{ cfg.tpot_sla }}
+          severe_ratio={{ cfg.severe_ratio }} · ttft_sla={{ cfg.ttft_sla }} ms · tpot_sla={{ cfg.tpot_sla }} ms
         </div>
       </div>
       {% if records and records|length > 0 %}
@@ -175,8 +175,8 @@
               <tr class="text-secondary">
                 <th>user_id</th>
                 <th class="text-end">hit_count</th>
-                <th class="text-end">avg TTFT</th>
-                <th class="text-end">avg TPOT</th>
+                <th class="text-end">avg TTFT (ms)</th>
+                <th class="text-end">avg TPOT (ms)</th>
                 <th class="text-end">avg RPM</th>
                 <th class="text-end">avg 输入</th>
                 <th class="text-end">avg 输出</th>

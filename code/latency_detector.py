@@ -9,7 +9,7 @@ import pandas as pd
 
 @dataclass(frozen=True)
 class LatencyDetectorConfig:
-    ttft_sla: float = 25.0
+    ttft_sla: float = 25000.0
     tpot_sla: float = 45.0
     severe_ratio: float = 1.3
     mild_consecutive_windows: int = 2

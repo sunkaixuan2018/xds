@@ -24,10 +24,10 @@
       <div class="small text-secondary mt-1">时间范围：<code>{{ start_dt }}</code> 到 <code>{{ end_dt }}</code></div>
       <div class="small text-secondary mt-1">事件类型：<code>{{ ev.rootcause_scope }}</code></div>
       <div class="small text-secondary mt-1">
-        TTFT 峰值：{{ ev.system_peak_time_label_ttft }}（{{ "%.2f"|format(ev.system_peak_ttft) }}）
+        TTFT 峰值：{{ ev.system_peak_time_label_ttft }}（{{ "%.2f"|format(ev.system_peak_ttft) }} ms）
       </div>
       <div class="small text-secondary mt-1">
-        TPOT 峰值：{{ ev.system_peak_time_label_tpot }}（{{ "%.2f"|format(ev.system_peak_tpot) }}）
+        TPOT 峰值：{{ ev.system_peak_time_label_tpot }}（{{ "%.2f"|format(ev.system_peak_tpot) }} ms）
       </div>
     </div>
   </div>

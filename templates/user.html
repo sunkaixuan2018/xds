@@ -28,18 +28,18 @@
     <div class="col-md-3">
       <div class="card stat-card shadow-sm">
         <div class="card-body">
-          <div class="stat-label">平均 TTFT</div>
+          <div class="stat-label">平均 TTFT (ms)</div>
           <div class="stat-value">{{ "%.2f"|format(row.avg_ttft) }}</div>
-          <div class="stat-sub text-secondary">P95={{ "%.2f"|format(row.p95_ttft) }}</div>
+          <div class="stat-sub text-secondary">P95={{ "%.2f"|format(row.p95_ttft) }} ms</div>
         </div>
       </div>
     </div>
     <div class="col-md-3">
       <div class="card stat-card shadow-sm">
         <div class="card-body">
-          <div class="stat-label">平均 TPOT</div>
+          <div class="stat-label">平均 TPOT (ms)</div>
           <div class="stat-value">{{ "%.2f"|format(row.avg_tpot) }}</div>
-          <div class="stat-sub text-secondary">P95={{ "%.2f"|format(row.p95_tpot) }}</div>
+          <div class="stat-sub text-secondary">P95={{ "%.2f"|format(row.p95_tpot) }} ms</div>
         </div>
       </div>
     </div>

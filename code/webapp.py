@@ -911,9 +911,9 @@ def create_app() -> Flask:
             np_bool(s["sys_anom_ttft"]),
             np_bool(s["sys_anom_tpot"]),
             s.get("events", []),
-            float(s["cfg"].get("ttft_sla", 25.0)),
+            float(s["cfg"].get("ttft_sla", 25000.0)),
             float(s["cfg"].get("tpot_sla", 45.0)),
-            float(s["cfg"].get("ttft_sla", 25.0)) * float(s["cfg"].get("severe_ratio", 1.3)),
+            float(s["cfg"].get("ttft_sla", 25000.0)) * float(s["cfg"].get("severe_ratio", 1.3)),
             float(s["cfg"].get("tpot_sla", 45.0)) * float(s["cfg"].get("severe_ratio", 1.3)),
         )
         system_fig_html = pio.to_html(system_fig, full_html=False, include_plotlyjs="inline")
@@ -1001,9 +1001,9 @@ def create_app() -> Flask:
             np_array(s["completion_tokens"])[idx],
             np_bool_matrix(s["flags"])[idx],
             s.get("events", []),
-            float(s["cfg"].get("ttft_sla", 25.0)),
+            float(s["cfg"].get("ttft_sla", 25000.0)),
             float(s["cfg"].get("tpot_sla", 45.0)),
-            float(s["cfg"].get("ttft_sla", 25.0)) * float(s["cfg"].get("severe_ratio", 1.3)),
+            float(s["cfg"].get("ttft_sla", 25000.0)) * float(s["cfg"].get("severe_ratio", 1.3)),
             float(s["cfg"].get("tpot_sla", 45.0)) * float(s["cfg"].get("severe_ratio", 1.3)),
         )
         user_fig_html = pio.to_html(user_fig, full_html=False, include_plotlyjs="inline")
@@ -1017,9 +1017,9 @@ def create_app() -> Flask:
             np_bool(s["sys_anom_ttft"]),
             np_bool(s["sys_anom_tpot"]),
             s.get("events", []),
-            float(s["cfg"].get("ttft_sla", 25.0)),
+            float(s["cfg"].get("ttft_sla", 25000.0)),
             float(s["cfg"].get("tpot_sla", 45.0)),
-            float(s["cfg"].get("ttft_sla", 25.0)) * float(s["cfg"].get("severe_ratio", 1.3)),
+            float(s["cfg"].get("ttft_sla", 25000.0)) * float(s["cfg"].get("severe_ratio", 1.3)),
             float(s["cfg"].get("tpot_sla", 45.0)) * float(s["cfg"].get("severe_ratio", 1.3)),
         )
         system_fig_html = pio.to_html(system_fig, full_html=False, include_plotlyjs="inline")
@@ -2089,7 +2089,7 @@ def build_latency_system_figure(
                 col=1,
             )
 
-    fig.update_yaxes(title_text="TTFT (s)", row=1, col=1, secondary_y=False)
+    fig.update_yaxes(title_text="TTFT (ms)", row=1, col=1, secondary_y=False)
     fig.update_yaxes(title_text="TPOT (ms)", row=1, col=1, secondary_y=True)
     fig.update_yaxes(title_text="RPM", row=2, col=1, secondary_y=False)
     fig.update_yaxes(title_text="TPM", row=2, col=1, secondary_y=True)
@@ -2209,7 +2209,7 @@ def build_latency_user_figure(
                 col=1,
             )
 
-    fig.update_yaxes(title_text="TTFT (s)", row=1, col=1, secondary_y=False)
+    fig.update_yaxes(title_text="TTFT (ms)", row=1, col=1, secondary_y=False)
     fig.update_yaxes(title_text="TPOT (ms)", row=1, col=1, secondary_y=True)
     fig.update_yaxes(title_text="RPM", row=2, col=1, secondary_y=False)
     fig.update_yaxes(title_text="TPM", row=2, col=1, secondary_y=True)
