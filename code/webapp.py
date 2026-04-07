@@ -13,6 +13,7 @@ from dataclasses import asdict, replace
 from datetime import datetime, timezone, timedelta
 
 from pathlib import Path
+from time import perf_counter
 
 from typing import Any
 
@@ -826,7 +827,9 @@ def create_app() -> Flask:
             return redirect(url_for("pool_select", upload_id=upload_id))
 
         try:
+            load_started = perf_counter()
             df = pd.read_excel(info["file_path"], sheet_name=sheet_name)
+            file_load_seconds = perf_counter() - load_started
             if df.empty:
                 raise ValueError("所选 sheet 没有可用数据。")
 
@@ -841,7 +844,9 @@ def create_app() -> Flask:
                     max_events = 5
 
             cfg = _latency_config_for_sensitivity(sensitivity, max_events)
+            detect_started = perf_counter()
             res = detect_latency_anomalies(cfg, df)
+            detect_seconds = perf_counter() - detect_started
             t = res["time_index"]
 
             session_id = uuid.uuid4().hex
@@ -853,6 +858,8 @@ def create_app() -> Flask:
                 "sheet_name": sheet_name,
                 "sensitivity_mode": sensitivity,
                 "sensitivity_mode_label": _latency_sensitivity_label(sensitivity),
+                "file_load_seconds": float(file_load_seconds),
+                "detect_seconds": float(detect_seconds),
                 "t": [dt.isoformat() for dt in t],
                 "cfg": res["config_echo"],
                 "user_ids": res["user_ids"],
@@ -961,6 +968,8 @@ def create_app() -> Flask:
             system_fig_html=system_fig_html,
             sensitivity_mode_label=s.get("sensitivity_mode_label", "均衡"),
             time_step_minutes=int(s.get("time_step_minutes", 60)),
+            file_load_seconds=float(s.get("file_load_seconds", 0.0)),
+            detect_seconds=float(s.get("detect_seconds", 0.0)),
         )
 
 
