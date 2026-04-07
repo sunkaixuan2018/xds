@@ -875,6 +875,7 @@ def create_app() -> Flask:
                 "sensitivity_mode_label": _latency_sensitivity_label(sensitivity),
                 "file_load_seconds": float(file_load_seconds),
                 "detect_seconds": float(detect_seconds),
+                "detection_timings": res.get("detection_timings", {}),
                 "t": [dt.isoformat() for dt in t],
                 "cfg": res["config_echo"],
                 "user_ids": res["user_ids"],
@@ -996,6 +997,20 @@ def create_app() -> Flask:
             _timing_item("Detection", analysis_timings.get("detect_seconds", s.get("detect_seconds", 0.0))),
             _timing_item("Session Build", analysis_timings.get("session_build_seconds", 0.0)),
         ]
+        detection_timings = s.get("detection_timings", {})
+        detection_timing_items = [
+            _timing_item("Detection Total", detection_timings.get("detection_total_seconds", 0.0)),
+            _timing_item("Input Prepare", detection_timings.get("prepare_input_seconds", 0.0)),
+            _timing_item("Deduplicate", detection_timings.get("dedupe_seconds", 0.0)),
+            _timing_item("Time Index", detection_timings.get("time_index_seconds", 0.0)),
+            _timing_item("Matrix Build", detection_timings.get("matrix_build_seconds", 0.0)),
+            _timing_item("System Series", detection_timings.get("system_series_seconds", 0.0)),
+            _timing_item("Event Detect", detection_timings.get("event_detection_seconds", 0.0)),
+            _timing_item("Baseline", detection_timings.get("baseline_seconds", 0.0)),
+            _timing_item("Root Cause", detection_timings.get("rootcause_seconds", 0.0)),
+            _timing_item("Records", detection_timings.get("records_seconds", 0.0)),
+            _timing_item("Stats", detection_timings.get("stats_seconds", 0.0)),
+        ]
         results_pre_render_seconds = perf_counter() - results_request_started
         template_render_marker = "__RESULTS_TEMPLATE_RENDER_SECONDS__"
         results_total_marker = "__RESULTS_TOTAL_SECONDS__"
@@ -1030,6 +1045,7 @@ def create_app() -> Flask:
             file_load_seconds=float(s.get("file_load_seconds", 0.0)),
             detect_seconds=float(s.get("detect_seconds", 0.0)),
             analysis_timing_items=analysis_timing_items,
+            detection_timing_items=detection_timing_items,
             results_timing_items=results_timing_items,
         )
         template_render_seconds = perf_counter() - render_started

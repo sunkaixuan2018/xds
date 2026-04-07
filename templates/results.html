@@ -39,6 +39,14 @@
           </div>
         </div>
       </div>
+      <div class="small mb-3">
+        <div class="fw-semibold mb-2">Detection Breakdown</div>
+        <div class="d-flex flex-wrap gap-3 text-secondary">
+          {% for item in detection_timing_items %}
+            <div>{{ item.label }}: <code>{{ item.seconds }} s</code></div>
+          {% endfor %}
+        </div>
+      </div>
       <div class="d-flex flex-wrap gap-4 small text-secondary">
         <div>文件加载耗时：<code>{{ "%.3f"|format(file_load_seconds) }} s</code></div>
         <div>异常检测耗时：<code>{{ "%.3f"|format(detect_seconds) }} s</code></div>

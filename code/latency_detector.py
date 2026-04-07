@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from time import perf_counter
 from typing import Any
 
 import numpy as np
@@ -242,22 +243,34 @@ def _combined_local_score(
 
 
 def detect_latency_anomalies(cfg: LatencyDetectorConfig, df: pd.DataFrame) -> dict[str, Any]:
+    detection_started = perf_counter()
+
+    prepare_started = perf_counter()
     prepared = validate_latency_input(df)
+    prepare_input_seconds = perf_counter() - prepare_started
+
+    dedupe_started = perf_counter()
     prepared = _collapse_duplicate_rows(prepared)
     prepared = prepared.sort_values(["domain_id", "collect_time_std_parsed"]).reset_index(drop=True)
+    dedupe_seconds = perf_counter() - dedupe_started
 
+    time_index_started = perf_counter()
     user_ids = sorted(prepared["domain_id"].astype(str).unique().tolist())
     base_time_index = pd.Series(sorted(pd.unique(prepared["collect_time_std_parsed"])))
     freq = _infer_time_freq(base_time_index)
     time_index = pd.date_range(start=base_time_index.min(), end=base_time_index.max(), freq=freq)
+    time_index_seconds = perf_counter() - time_index_started
 
+    matrix_started = perf_counter()
     rpm_matrix = _build_metric_matrix(prepared, user_ids, time_index, "rpm")
     tpm_matrix = _build_metric_matrix(prepared, user_ids, time_index, "tpm")
     ttft_matrix = _build_metric_matrix(prepared, user_ids, time_index, "ttft_avg")
     tpot_matrix = _build_metric_matrix(prepared, user_ids, time_index, "tpot_avg")
     prompt_matrix = _build_metric_matrix(prepared, user_ids, time_index, "prompt_tokens")
     completion_matrix = _build_metric_matrix(prepared, user_ids, time_index, "completion_tokens")
+    matrix_build_seconds = perf_counter() - matrix_started
 
+    system_series_started = perf_counter()
     system_rpm = rpm_matrix.sum(axis=0)
     system_tpm = tpm_matrix.sum(axis=0)
 
@@ -277,7 +290,9 @@ def detect_latency_anomalies(cfg: LatencyDetectorConfig, df: pd.DataFrame) -> di
         [_weighted_average_1d(completion_matrix[:, i], rpm_matrix[:, i]) for i in range(len(time_index))],
         dtype=float,
     )
+    system_series_seconds = perf_counter() - system_series_started
 
+    event_detection_started = perf_counter()
     ttft_heavy = system_ttft >= (cfg.ttft_sla * cfg.severe_ratio)
     tpot_heavy = system_tpot >= (cfg.tpot_sla * cfg.severe_ratio)
     ttft_mild = system_ttft > cfg.ttft_sla
@@ -293,7 +308,9 @@ def detect_latency_anomalies(cfg: LatencyDetectorConfig, df: pd.DataFrame) -> di
     sys_event_mask = np.zeros_like(sys_anom, dtype=bool)
     for a, b in events:
         sys_event_mask[a : b + 1] = True
+    event_detection_seconds = perf_counter() - event_detection_started
 
+    baseline_started = perf_counter()
     baseline_rpm = np.vstack(
         [_rolling_mean(rpm_matrix[i], cfg.baseline_window_points, cfg.min_baseline_points) for i in range(len(user_ids))]
     )
@@ -313,10 +330,12 @@ def detect_latency_anomalies(cfg: LatencyDetectorConfig, df: pd.DataFrame) -> di
     baseline_tpm = np.nan_to_num(baseline_tpm, nan=0.0)
     baseline_prompt = np.nan_to_num(baseline_prompt, nan=0.0)
     baseline_completion = np.nan_to_num(baseline_completion, nan=0.0)
+    baseline_seconds = perf_counter() - baseline_started
 
     flags = np.zeros_like(rpm_matrix, dtype=bool)
     event_reports: list[dict[str, Any]] = []
 
+    rootcause_started = perf_counter()
     for a, b in events:
         scope = _scope_for_window(sys_anom_ttft, sys_anom_tpot, a, b)
         weights = _score_weights(scope)
@@ -413,7 +432,9 @@ def detect_latency_anomalies(cfg: LatencyDetectorConfig, df: pd.DataFrame) -> di
                 },
             }
         )
+    rootcause_seconds = perf_counter() - rootcause_started
 
+    records_started = perf_counter()
     reason_map: dict[str, set[str]] = {uid: set() for uid in user_ids}
     for report in event_reports:
         scope = str(report.get("rootcause_scope", "both"))
@@ -452,7 +473,9 @@ def detect_latency_anomalies(cfg: LatencyDetectorConfig, df: pd.DataFrame) -> di
     records_df = pd.DataFrame.from_records(records)
     if not records_df.empty:
         records_df = records_df.sort_values(["hit_count", "max_ttft", "max_tpot", "user_id"], ascending=[False, False, False, True])
+    records_seconds = perf_counter() - records_started
 
+    stats_started = perf_counter()
     system_stats = {
         "hours": int(len(time_index)),
         "event_count": int(len(events)),
@@ -493,6 +516,20 @@ def detect_latency_anomalies(cfg: LatencyDetectorConfig, df: pd.DataFrame) -> di
             "system_max": float(np.max(system_completion)) if len(system_completion) else 0.0,
         },
     }
+    stats_seconds = perf_counter() - stats_started
+    detection_timings = {
+        "prepare_input_seconds": float(prepare_input_seconds),
+        "dedupe_seconds": float(dedupe_seconds),
+        "time_index_seconds": float(time_index_seconds),
+        "matrix_build_seconds": float(matrix_build_seconds),
+        "system_series_seconds": float(system_series_seconds),
+        "event_detection_seconds": float(event_detection_seconds),
+        "baseline_seconds": float(baseline_seconds),
+        "rootcause_seconds": float(rootcause_seconds),
+        "records_seconds": float(records_seconds),
+        "stats_seconds": float(stats_seconds),
+        "detection_total_seconds": float(perf_counter() - detection_started),
+    }
 
     return {
         "time_index": [ts.to_pydatetime() if hasattr(ts, "to_pydatetime") else ts for ts in time_index],
@@ -520,4 +557,5 @@ def detect_latency_anomalies(cfg: LatencyDetectorConfig, df: pd.DataFrame) -> di
         "records": records_df,
         "system_stats": system_stats,
         "config_echo": asdict(cfg),
+        "detection_timings": detection_timings,
     }
