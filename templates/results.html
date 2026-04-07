@@ -115,6 +115,21 @@
                   <span class="badge text-bg-warning">duration={{ ev.duration_hours }}</span>
                 </div>
                 <div class="small text-secondary mt-1">事件类型：<code>{{ ev.rootcause_scope }}</code></div>
+                <div class="small mt-1">
+                  {% if ev.is_new_user_join_event %}
+                    <span class="badge text-bg-info">新用户加入事件</span>
+                  {% else %}
+                    <span class="badge text-bg-light">传统异常事件</span>
+                  {% endif %}
+                </div>
+                {% if ev.new_join_users and ev.new_join_users|length > 0 %}
+                  <div class="small text-secondary mt-1">
+                    新加入用户：
+                    {% for u in ev.new_join_users %}
+                      <code>{{ u.user_id }}</code>（{{ u.first_active_time_label }}）{% if not loop.last %}，{% endif %}
+                    {% endfor %}
+                  </div>
+                {% endif %}
                 <div class="small text-secondary mt-1">
                   主导诱因：<code>{{ ev.driver_signal }}</code>
                   · 流量侧={{ "%.1f"|format(ev.traffic_driver_ratio * 100) }}%

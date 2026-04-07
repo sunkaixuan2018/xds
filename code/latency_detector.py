@@ -360,6 +360,14 @@ def _culprit_driver_signal(
     return _dominance_label(traffic_ratio, length_ratio, "traffic_family_dominant", "length_family_dominant", "traffic_length_mixed")
 
 
+def _first_positive_index(values: np.ndarray) -> int:
+    arr = np.asarray(values, dtype=float)
+    idx = np.where(np.isfinite(arr) & (arr > 0))[0]
+    if idx.size == 0:
+        return -1
+    return int(idx[0])
+
+
 def detect_latency_anomalies(cfg: LatencyDetectorConfig, df: pd.DataFrame) -> dict[str, Any]:
     detection_started = perf_counter()
 
@@ -460,6 +468,10 @@ def detect_latency_anomalies(cfg: LatencyDetectorConfig, df: pd.DataFrame) -> di
         _rolling_mean(system_completion, cfg.baseline_window_points, cfg.min_baseline_points),
         nan=0.0,
     )
+    first_active_hours = np.array(
+        [_first_positive_index(rpm_matrix[i] + tpm_matrix[i]) for i in range(len(user_ids))],
+        dtype=int,
+    )
 
     flags = np.zeros_like(rpm_matrix, dtype=bool)
     event_reports: list[dict[str, Any]] = []
@@ -511,6 +523,7 @@ def detect_latency_anomalies(cfg: LatencyDetectorConfig, df: pd.DataFrame) -> di
 
         order = np.argsort(scores)[::-1]
         culprits: list[dict[str, Any]] = []
+        new_join_users: list[dict[str, Any]] = []
         cumulative = 0.0
         for idx in order:
             if scores[idx] <= 0:
@@ -537,27 +550,38 @@ def detect_latency_anomalies(cfg: LatencyDetectorConfig, df: pd.DataFrame) -> di
                 prompt_ratio[idx],
                 completion_ratio[idx],
             )
+            first_active_hour = int(first_active_hours[idx])
+            is_new_user_join = first_active_hour >= a and first_active_hour <= b
 
-            culprits.append(
-                {
-                    "user_id": user_ids[idx],
-                    "score": float(scores[idx]),
-                    "score_ratio": ratio,
-                    "rpm_excess_ratio": float(rpm_ratio[idx]),
-                    "tpm_excess_ratio": float(tpm_ratio[idx]),
-                    "prompt_delta_ratio": float(prompt_ratio[idx]),
-                    "completion_delta_ratio": float(completion_ratio[idx]),
-                    "length_signal": length_signal,
-                    "driver_signal": driver_signal,
-                    "peak_hour": peak_hour,
-                    "peak_rpm": float(rpm_matrix[idx, peak_hour]),
-                    "peak_tpm": float(tpm_matrix[idx, peak_hour]),
-                    "peak_prompt_tokens": float(prompt_matrix[idx, peak_hour]),
-                    "peak_completion_tokens": float(completion_matrix[idx, peak_hour]),
-                    "peak_ttft": float(ttft_matrix[idx, peak_hour]),
-                    "peak_tpot": float(tpot_matrix[idx, peak_hour]),
-                }
-            )
+            culprit_record = {
+                "user_id": user_ids[idx],
+                "score": float(scores[idx]),
+                "score_ratio": ratio,
+                "rpm_excess_ratio": float(rpm_ratio[idx]),
+                "tpm_excess_ratio": float(tpm_ratio[idx]),
+                "prompt_delta_ratio": float(prompt_ratio[idx]),
+                "completion_delta_ratio": float(completion_ratio[idx]),
+                "length_signal": length_signal,
+                "driver_signal": driver_signal,
+                "peak_hour": peak_hour,
+                "peak_rpm": float(rpm_matrix[idx, peak_hour]),
+                "peak_tpm": float(tpm_matrix[idx, peak_hour]),
+                "peak_prompt_tokens": float(prompt_matrix[idx, peak_hour]),
+                "peak_completion_tokens": float(completion_matrix[idx, peak_hour]),
+                "peak_ttft": float(ttft_matrix[idx, peak_hour]),
+                "peak_tpot": float(tpot_matrix[idx, peak_hour]),
+                "first_active_hour": first_active_hour,
+                "is_new_user_join": bool(is_new_user_join),
+            }
+            culprits.append(culprit_record)
+            if is_new_user_join:
+                new_join_users.append(
+                    {
+                        "user_id": user_ids[idx],
+                        "first_active_hour": first_active_hour,
+                        "score_ratio": ratio,
+                    }
+                )
             cumulative += ratio
             if len(culprits) >= cfg.culprit_top_k or cumulative >= cfg.culprit_cum_ratio:
                 break
@@ -576,6 +600,9 @@ def detect_latency_anomalies(cfg: LatencyDetectorConfig, df: pd.DataFrame) -> di
                 "system_peak_hour_tpot": system_peak_tpot_hour,
                 "system_peak_tpot": float(system_tpot[system_peak_tpot_hour]),
                 "culprits": culprits,
+                "is_new_user_join_event": bool(new_join_users),
+                "event_variant": "new_user_join_event" if new_join_users else "traditional_latency_event",
+                "new_join_users": new_join_users,
                 "driver_signal": event_driver["driver_signal"],
                 "traffic_driver_ratio": event_driver["traffic_driver_ratio"],
                 "length_driver_ratio": event_driver["length_driver_ratio"],
@@ -603,6 +630,8 @@ def detect_latency_anomalies(cfg: LatencyDetectorConfig, df: pd.DataFrame) -> di
         scope = str(report.get("rootcause_scope", "both"))
         for culprit in report.get("culprits", []) or []:
             reason_map[str(culprit["user_id"])].add(scope)
+            if culprit.get("is_new_user_join"):
+                reason_map[str(culprit["user_id"])].add("new_user_join")
 
     records: list[dict[str, Any]] = []
     for idx, uid in enumerate(user_ids):

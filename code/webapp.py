@@ -1453,8 +1453,17 @@ def _format_latency_event_reports_with_time(event_reports: list[dict[str, Any]],
             c = dict(culprit)
             peak_hour = int(c.get("peak_hour", -1))
             c["peak_time_label"] = t[peak_hour].strftime("%Y-%m-%d %H:%M") if 0 <= peak_hour < n else ""
+            first_active_hour = int(c.get("first_active_hour", -1))
+            c["first_active_time_label"] = t[first_active_hour].strftime("%Y-%m-%d %H:%M") if 0 <= first_active_hour < n else ""
             culprits.append(c)
         e["culprits"] = culprits
+        new_join_users: list[dict[str, Any]] = []
+        for item in e.get("new_join_users", []) or []:
+            x = dict(item)
+            first_active_hour = int(x.get("first_active_hour", -1))
+            x["first_active_time_label"] = t[first_active_hour].strftime("%Y-%m-%d %H:%M") if 0 <= first_active_hour < n else ""
+            new_join_users.append(x)
+        e["new_join_users"] = new_join_users
         out.append(e)
     return out
 
