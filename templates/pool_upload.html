@@ -1,30 +1,26 @@
 {% extends "base.html" %}
-{% set title = "按池子分析 - 上传 RPM/TPM 文件" %}
+{% set title = "池子时延异常检测 - 上传聚合结果" %}
 
 {% block content %}
   <div class="row justify-content-center">
     <div class="col-lg-8">
       <div class="card shadow-sm">
         <div class="card-body">
-          <h5 class="card-title mb-2">上传池子 RPM/TPM 汇总 Excel</h5>
+          <h5 class="card-title mb-2">上传聚合结果 Excel</h5>
           <p class="text-secondary mb-4">
-            支持上传 RPM、TPM 任意一个或同时上传两个文件（建议来自 <code>result</code> 目录，
-            由 <code>code/aggregate_pool_hours.py</code> 生成）。
-            若同时上传，会按共同 sheet 做联合分析；若只上传一个，则执行单通道识别。
+            这里上传的是前一步生成的聚合结果文件，格式为单个 Excel、多 sheet，每个 sheet 内包含
+            <code>domain_id</code>、<code>rpm</code>、<code>tpm</code>、<code>ttft_avg</code>、
+            <code>tpot_avg</code>、<code>prompt_tokens</code>、<code>completion_tokens</code>、
+            <code>collect_time_std</code>。
           </p>
 
           <form action="{{ url_for('pool_upload') }}" method="post" enctype="multipart/form-data">
             <div class="mb-3">
-              <label class="form-label">RPM Excel 文件</label>
-              <input class="form-control" type="file" name="file_rpm" accept=".xlsx,.xls">
-              <div class="form-text">仅支持 <code>.xlsx</code> / <code>.xls</code>。</div>
+              <label class="form-label">聚合结果 Excel</label>
+              <input class="form-control" type="file" name="file_workbook" accept=".xlsx,.xls" required>
+              <div class="form-text">建议直接上传 <code>code/aggregate_processed_metrics.py</code> 产出的结果文件。</div>
             </div>
-            <div class="mb-3">
-              <label class="form-label">TPM Excel 文件</label>
-              <input class="form-control" type="file" name="file_tpm" accept=".xlsx,.xls">
-              <div class="form-text">可单独上传；若与 RPM 同传则需有共同 sheet 名。</div>
-            </div>
-            <button class="btn btn-primary btn-lg w-100" type="submit">上传并开始分析</button>
+            <button class="btn btn-primary btn-lg w-100" type="submit">上传并选择池子</button>
           </form>
         </div>
       </div>

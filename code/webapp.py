@@ -51,6 +51,7 @@ from werkzeug.utils import secure_filename
 
 
 from detector import DetectorConfig, build_time_index, detect_anomalies, load_dataframe, validate_and_prepare
+from latency_detector import LatencyDetectorConfig, detect_latency_anomalies
 
 
 
@@ -260,11 +261,38 @@ def build_pool_sheet_groups(sheet_names: list[str]) -> list[dict[str, Any]]:
 
 def _pool_upload_display_name(info: dict[str, Any]) -> str:
     mode = str(info.get("upload_mode", "dual"))
+    if mode == "latency":
+        return str(info.get("file_name", ""))
     if mode == "rpm_only":
         return f"RPM={info.get('file_name_rpm', '')}"
     if mode == "tpm_only":
         return f"TPM={info.get('file_name_tpm', '')}"
     return f"RPM={info.get('file_name_rpm', '')} ; TPM={info.get('file_name_tpm', '')}"
+
+
+def _latency_config_for_sensitivity(sensitivity: str, max_events: int) -> LatencyDetectorConfig:
+    mode = (sensitivity or "balanced").strip().lower()
+    ratio_mapping = {
+        "sensitive": 1.10,
+        "balanced": 1.30,
+        "relaxed": 1.50,
+        "high": 1.10,
+        "medium": 1.30,
+        "low": 1.50,
+    }
+    return LatencyDetectorConfig(severe_ratio=float(ratio_mapping.get(mode, 1.30)), max_events=max_events)
+
+
+def _latency_sensitivity_label(sensitivity: str) -> str:
+    mapping = {
+        "sensitive": "灵敏",
+        "balanced": "均衡",
+        "relaxed": "宽松",
+        "high": "灵敏",
+        "medium": "均衡",
+        "low": "宽松",
+    }
+    return mapping.get((sensitivity or "balanced").strip().lower(), "均衡")
 
 
 
@@ -710,85 +738,38 @@ def create_app() -> Flask:
     @app.post("/pool")
 
     def pool_upload():
-
-        f_rpm = request.files.get("file_rpm")
-        f_tpm = request.files.get("file_tpm")
-
-        has_rpm = bool(f_rpm and f_rpm.filename)
-        has_tpm = bool(f_tpm and f_tpm.filename)
-        if (not has_rpm) and (not has_tpm):
-            flash("请至少上传一个聚合 Excel 文件（RPM 或 TPM）。", "danger")
-
+        f_workbook = request.files.get("file_workbook")
+        has_file = bool(f_workbook and f_workbook.filename)
+        if not has_file:
+            flash("请上传一个聚合结果 Excel 文件。", "danger")
             return redirect(url_for("pool_index"))
 
-        if has_rpm and not (f_rpm.filename.lower().endswith(".xlsx") or f_rpm.filename.lower().endswith(".xls")):
-            flash("RPM 文件格式不正确，请上传 Excel（.xlsx / .xls）。", "danger")
-            return redirect(url_for("pool_index"))
-        if has_tpm and not (f_tpm.filename.lower().endswith(".xlsx") or f_tpm.filename.lower().endswith(".xls")):
-            flash("TPM 文件格式不正确，请上传 Excel（.xlsx / .xls）。", "danger")
+        if not (f_workbook.filename.lower().endswith(".xlsx") or f_workbook.filename.lower().endswith(".xls")):
+            flash("文件格式不正确，请上传 Excel（.xlsx / .xls）。", "danger")
             return redirect(url_for("pool_index"))
 
-        filename_rpm = secure_filename(f_rpm.filename) if has_rpm else ""
-        filename_tpm = secure_filename(f_tpm.filename) if has_tpm else ""
-
+        filename = secure_filename(f_workbook.filename)
         upload_id = uuid.uuid4().hex
-
-        saved_path_rpm = (UPLOAD_DIR / f"pool_{upload_id}__rpm__{filename_rpm}") if has_rpm else None
-        saved_path_tpm = (UPLOAD_DIR / f"pool_{upload_id}__tpm__{filename_tpm}") if has_tpm else None
-
-        if has_rpm and saved_path_rpm is not None:
-            f_rpm.save(saved_path_rpm)
-        if has_tpm and saved_path_tpm is not None:
-            f_tpm.save(saved_path_tpm)
+        saved_path = UPLOAD_DIR / f"pool_{upload_id}__latency__{filename}"
+        f_workbook.save(saved_path)
 
         try:
-
-            sheets_rpm: list[str] = []
-            sheets_tpm: list[str] = []
-            if has_rpm and saved_path_rpm is not None:
-                xl_rpm = pd.ExcelFile(saved_path_rpm)
-                sheets_rpm = xl_rpm.sheet_names
-                xl_rpm.close()
-            if has_tpm and saved_path_tpm is not None:
-                xl_tpm = pd.ExcelFile(saved_path_tpm)
-                sheets_tpm = xl_tpm.sheet_names
-                xl_tpm.close()
-
+            xl = pd.ExcelFile(saved_path)
+            sheet_names = xl.sheet_names
+            xl.close()
         except Exception as e:
-
             flash(f"读取 Excel 失败：{e}", "danger")
-
             return redirect(url_for("pool_index"))
-
-        if has_rpm and has_tpm:
-            sheet_names = sorted(set(sheets_rpm).intersection(set(sheets_tpm)))
-            upload_mode = "dual"
-            if not sheet_names:
-                flash("RPM 与 TPM 文件没有共同 sheet，无法联合分析。", "danger")
-                return redirect(url_for("pool_index"))
-        elif has_rpm:
-            sheet_names = sorted(sheets_rpm)
-            upload_mode = "rpm_only"
-        else:
-            sheet_names = sorted(sheets_tpm)
-            upload_mode = "tpm_only"
 
         if not sheet_names:
             flash("上传文件没有可用 sheet。", "danger")
-
             return redirect(url_for("pool_index"))
 
         app.config["POOL_UPLOADS"][upload_id] = {
-
-            "file_path_rpm": str(saved_path_rpm) if saved_path_rpm is not None else "",
-            "file_path_tpm": str(saved_path_tpm) if saved_path_tpm is not None else "",
-            "upload_mode": upload_mode,
-
+            "file_path": str(saved_path),
+            "file_name": filename,
+            "upload_mode": "latency",
             "sheet_names": sheet_names,
-
-            "file_name_rpm": filename_rpm,
-            "file_name_tpm": filename_tpm,
-
         }
 
         return redirect(url_for("pool_select", upload_id=upload_id))
@@ -814,7 +795,7 @@ def create_app() -> Flask:
             upload_id=upload_id,
 
             file_name=_pool_upload_display_name(info),
-            upload_mode=str(info.get("upload_mode", "dual")),
+            upload_mode=str(info.get("upload_mode", "latency")),
 
             sheet_names=info["sheet_names"],
 
@@ -845,363 +826,63 @@ def create_app() -> Flask:
             return redirect(url_for("pool_select", upload_id=upload_id))
 
         try:
-            upload_mode = str(info.get("upload_mode", "dual"))
-            use_rpm = bool(info.get("file_path_rpm"))
-            use_tpm = bool(info.get("file_path_tpm"))
-            if not use_rpm and not use_tpm:
-                raise ValueError("上传文件信息缺失，请重新上传。")
-            if upload_mode == "dual" and (not use_rpm or not use_tpm):
-                raise ValueError("联合分析需要同时上传 RPM 与 TPM。")
+            df = pd.read_excel(info["file_path"], sheet_name=sheet_name)
+            if df.empty:
+                raise ValueError("所选 sheet 没有可用数据。")
 
-            # 整表先按字符串读，避免首列(用户ID)被 Excel/引擎推断为数字导致显示 0.0；
-            # 时间列后续在 validate_and_prepare 里会转成数值
-            df_rpm = None
-            df_tpm = None
-            h_cols_rpm: list[str] = []
-            h_cols_tpm: list[str] = []
-            if use_rpm:
-                df_rpm = pd.read_excel(info["file_path_rpm"], sheet_name=sheet_name, dtype=str)
-                df_rpm.columns = [str(c) for c in df_rpm.columns]
-                df_rpm.iloc[:, 0] = df_rpm.iloc[:, 0].fillna("").astype(str)
-                if df_rpm.shape[0] == 0 or df_rpm.shape[1] < 25:
-                    raise ValueError("RPM 该 sheet 行数或列数不足（至少一列用户标识 + 24 列时间）。")
-                df_rpm, h_cols_rpm = validate_and_prepare(df_rpm)
-            if use_tpm:
-                df_tpm = pd.read_excel(info["file_path_tpm"], sheet_name=sheet_name, dtype=str)
-                df_tpm.columns = [str(c) for c in df_tpm.columns]
-                df_tpm.iloc[:, 0] = df_tpm.iloc[:, 0].fillna("").astype(str)
-                if df_tpm.shape[0] == 0 or df_tpm.shape[1] < 25:
-                    raise ValueError("TPM 该 sheet 行数或列数不足（至少一列用户标识 + 24 列时间）。")
-                df_tpm, h_cols_tpm = validate_and_prepare(df_tpm)
-
-            if use_rpm and use_tpm:
-                if h_cols_rpm != h_cols_tpm:
-                    raise ValueError("RPM 与 TPM 该 sheet 的时间列不一致。")
-                h_cols = h_cols_rpm
-                rpm_uid = df_rpm["user_id"].astype(str)
-                tpm_uid = df_tpm["user_id"].astype(str)
-                shared = [u for u in rpm_uid.tolist() if u in set(tpm_uid.tolist())]
-                if not shared:
-                    raise ValueError("RPM 与 TPM 该 sheet 没有共同用户，无法联合分析。")
-                if len(shared) < len(rpm_uid) or len(shared) < len(tpm_uid):
-                    flash(f"RPM/TPM 用户集合不完全一致，已按交集 {len(shared)} 个用户联合分析。", "warning")
-                df_rpm = df_rpm[df_rpm["user_id"].astype(str).isin(shared)].copy()
-                df_tpm = df_tpm[df_tpm["user_id"].astype(str).isin(shared)].copy()
-                df_rpm["__order"] = pd.Categorical(df_rpm["user_id"].astype(str), categories=shared, ordered=True)
-                df_tpm["__order"] = pd.Categorical(df_tpm["user_id"].astype(str), categories=shared, ordered=True)
-                df_rpm = df_rpm.sort_values("__order").drop(columns="__order").reset_index(drop=True)
-                df_tpm = df_tpm.sort_values("__order").drop(columns="__order").reset_index(drop=True)
-            else:
-                h_cols = h_cols_rpm if use_rpm else h_cols_tpm
-
-            # 起始时间从第一个时间列名解析，如 "2026-01-18 16:00"
-
-            try:
-
-                start_ts = pd.to_datetime(h_cols[0], errors="coerce")
-
-                start_time = start_ts.to_pydatetime() if hasattr(start_ts, "to_pydatetime") else datetime(2026, 1, 1, 0, 0)
-
-            except Exception:
-
-                start_time = datetime(2026, 1, 1, 0, 0)
-
-            sensitivity = request.form.get("sensitivity", "medium").strip() or "medium"
-            pool_sensitivity = request.form.get("pool_sensitivity", "medium").strip() or "medium"
-            rootcause_mode = request.form.get("rootcause_mode", "strict").strip().lower() or "strict"
+            sensitivity = request.form.get("sensitivity", "balanced").strip() or "balanced"
             max_events_option = request.form.get("max_events_option", "5").strip().lower()
-            if rootcause_mode not in {"strict", "loose"}:
-                rootcause_mode = "strict"
-
-            cfg = _detector_config_for_sensitivity(sensitivity)
-            cfg = _apply_pool_sensitivity(cfg, pool_sensitivity)
-            cfg = replace(cfg, rootcause_mode=rootcause_mode)
             if max_events_option == "all":
-                cfg = replace(cfg, max_events=0)
+                max_events = 0
             else:
                 try:
-                    cfg = replace(cfg, max_events=int(max_events_option))
+                    max_events = int(max_events_option)
                 except Exception:
-                    cfg = replace(cfg, max_events=5)
+                    max_events = 5
 
-            res_rpm = detect_anomalies(cfg, df_rpm, h_cols) if use_rpm else None
-            res_tpm = detect_anomalies(cfg, df_tpm, h_cols) if use_tpm else None
-            base_res = res_rpm if use_rpm else res_tpm
-
-            hours = len(h_cols)
-
-            t = build_time_index(start_time=start_time, hours=hours)
-
-            system_fig = build_system_figure(
-
-                t,
-
-                base_res["S"],
-
-                base_res["system_median"],
-
-                base_res["system_ratio"],
-
-                base_res["sys_anom"],
-
-                base_res["sys_event_mask"],
-
-                base_res["events"],
-
-                cfg.sys_ratio_threshold,
-
-            )
-
-            system_fig_html = pio.to_html(system_fig, full_html=False, include_plotlyjs="inline")
-
-            if not use_tpm:
-                session_id = uuid.uuid4().hex
-                app.config["SESSIONS"][session_id] = {
-                    "created_at": datetime.now(timezone.utc).isoformat(),
-                    "file_name": f"RPM={info['file_name_rpm']} (池子: {sheet_name})",
-                    "saved_path": info["file_path_rpm"],
-                    "saved_path_rpm": info["file_path_rpm"],
-                    "start_time": start_time.isoformat(timespec="minutes"),
-                    "cfg": asdict(cfg),
-                    "analysis_mode": "single",
-                    "metric_type": "rpm",
-                    "t": [dt.isoformat() for dt in t],
-                    "h_cols": h_cols,
-                    "S": res_rpm["S"].tolist(),
-                    "system_median": np.asarray(res_rpm["system_median"], dtype=float).tolist(),
-                    "system_ratio": np.asarray(res_rpm["system_ratio"], dtype=float).tolist(),
-                    "sys_anom": res_rpm["sys_anom"].astype(bool).tolist(),
-                    "sys_event_mask": res_rpm["sys_event_mask"].astype(bool).tolist(),
-                    "events": res_rpm["events"],
-                    "event_reports": res_rpm["event_reports"],
-                    "user_ids": res_rpm["user_ids"],
-                    "records_csv": res_rpm["records"].to_csv(index=False, encoding="utf-8"),
-                    "records_json": res_rpm["records"].to_dict(orient="records"),
-                    "system_stats": res_rpm["system_stats"],
-                    "X": res_rpm["X"].tolist(),
-                    "flags": np.asarray(res_rpm["flags"], dtype=bool).tolist(),
-                    "growth": res_rpm["growth"].tolist(),
-                    "abs_z": res_rpm["abs_z"].tolist(),
-                    "share_z": res_rpm["share_z"].tolist(),
-                }
-                return redirect(url_for("results", session_id=session_id))
-            if not use_rpm and use_tpm:
-                session_id = uuid.uuid4().hex
-                app.config["SESSIONS"][session_id] = {
-                    "created_at": datetime.now(timezone.utc).isoformat(),
-                    "file_name": f"TPM={info['file_name_tpm']} (池子: {sheet_name})",
-                    "saved_path": info["file_path_tpm"],
-                    "saved_path_tpm": info["file_path_tpm"],
-                    "start_time": start_time.isoformat(timespec="minutes"),
-                    "cfg": asdict(cfg),
-                    "analysis_mode": "single",
-                    "metric_type": "tpm",
-                    "t": [dt.isoformat() for dt in t],
-                    "h_cols": h_cols,
-                    "S": res_tpm["S"].tolist(),
-                    "system_median": np.asarray(res_tpm["system_median"], dtype=float).tolist(),
-                    "system_ratio": np.asarray(res_tpm["system_ratio"], dtype=float).tolist(),
-                    "sys_anom": res_tpm["sys_anom"].astype(bool).tolist(),
-                    "sys_event_mask": res_tpm["sys_event_mask"].astype(bool).tolist(),
-                    "events": res_tpm["events"],
-                    "event_reports": res_tpm["event_reports"],
-                    "user_ids": res_tpm["user_ids"],
-                    "records_csv": res_tpm["records"].to_csv(index=False, encoding="utf-8"),
-                    "records_json": res_tpm["records"].to_dict(orient="records"),
-                    "system_stats": res_tpm["system_stats"],
-                    "X": res_tpm["X"].tolist(),
-                    "flags": np.asarray(res_tpm["flags"], dtype=bool).tolist(),
-                    "growth": res_tpm["growth"].tolist(),
-                    "abs_z": res_tpm["abs_z"].tolist(),
-                    "share_z": res_tpm["share_z"].tolist(),
-                }
-                return redirect(url_for("results", session_id=session_id))
-
-            # 联合事件：RPM/TPM 事件掩码并集
-            mask_rpm = np.asarray(res_rpm["sys_event_mask"], dtype=bool)
-            mask_tpm = np.asarray(res_tpm["sys_event_mask"], dtype=bool)
-            sys_event_mask_joint = mask_rpm | mask_tpm
-            events_joint = _events_from_mask(sys_event_mask_joint, cfg.event_min_len, cfg.event_merge_gap)
-
-            reports_rpm = res_rpm.get("event_reports", [])
-            reports_tpm = res_tpm.get("event_reports", [])
-            event_reports_joint: list[dict[str, Any]] = []
-            for (a, b) in events_joint:
-                rpm_active = bool(np.asarray(res_rpm["sys_anom"], dtype=bool)[a : b + 1].any())
-                tpm_active = bool(np.asarray(res_tpm["sys_anom"], dtype=bool)[a : b + 1].any())
-                scope = "both" if (rpm_active and tpm_active) else ("rpm_only" if rpm_active else "tpm_only")
-
-                best_rpm = None
-                if rpm_active and reports_rpm:
-                    best_rpm = max(
-                        reports_rpm,
-                        key=lambda ev: _overlap_len(a, b, int(ev.get("start_hour", -1)), int(ev.get("end_hour", -1))),
-                    )
-                best_tpm = None
-                if tpm_active and reports_tpm:
-                    best_tpm = max(
-                        reports_tpm,
-                        key=lambda ev: _overlap_len(a, b, int(ev.get("start_hour", -1)), int(ev.get("end_hour", -1))),
-                    )
-                culprits_rpm = (best_rpm or {}).get("culprits", []) if rpm_active else []
-                culprits_tpm = (best_tpm or {}).get("culprits", []) if tpm_active else []
-                culprits_primary = culprits_rpm if culprits_rpm else culprits_tpm
-                event_reports_joint.append(
-                    {
-                        "start_hour": int(a),
-                        "end_hour": int(b),
-                        "duration_hours": int(b - a + 1),
-                        "rootcause_scope": scope,
-                        "system_peak_hour_rpm": int(a + int(np.argmax(np.asarray(res_rpm["S"])[a : b + 1]))),
-                        "system_peak_rpm": float(np.max(np.asarray(res_rpm["S"])[a : b + 1])),
-                        "system_peak_hour_tpm": int(a + int(np.argmax(np.asarray(res_tpm["S"])[a : b + 1]))),
-                        "system_peak_tpm": float(np.max(np.asarray(res_tpm["S"])[a : b + 1])),
-                        "culprits_rpm": culprits_rpm,
-                        "culprits_tpm": culprits_tpm,
-                        "culprits": culprits_primary,
-                        "system_peak_hour": int(a + int(np.argmax(np.asarray(res_rpm["S"])[a : b + 1]))),
-                    }
-                )
-
-            stats_rpm = res_rpm["system_stats"]
-            stats_tpm = res_tpm["system_stats"]
-            system_stats_joint = {
-                "hours": int(len(h_cols)),
-                "event_count": int(len(events_joint)),
-                "event_hours_count": int(np.asarray(sys_event_mask_joint, dtype=bool).sum()),
-                "rpm": {
-                    "system_avg": float(stats_rpm.get("system_avg", 0.0)),
-                    "system_p95": float(stats_rpm.get("system_p95", 0.0)),
-                    "system_max": float(stats_rpm.get("system_max", 0.0)),
-                    "system_anom_hours_count": int(stats_rpm.get("system_anom_hours_count", 0)),
-                },
-                "tpm": {
-                    "system_avg": float(stats_tpm.get("system_avg", 0.0)),
-                    "system_p95": float(stats_tpm.get("system_p95", 0.0)),
-                    "system_max": float(stats_tpm.get("system_max", 0.0)),
-                    "system_anom_hours_count": int(stats_tpm.get("system_anom_hours_count", 0)),
-                },
-            }
-
-            rec_rpm_by_uid = {r["user_id"]: r for r in res_rpm["records"].to_dict(orient="records")}
-            rec_tpm_by_uid = {r["user_id"]: r for r in res_tpm["records"].to_dict(orient="records")}
-            user_ids = res_rpm["user_ids"]
-            records_joint = []
-            for i, uid in enumerate(user_ids):
-                rr = rec_rpm_by_uid.get(uid, {})
-                rt = rec_tpm_by_uid.get(uid, {})
-                hit_rpm = int(np.asarray(res_rpm["flags"], dtype=bool)[i].sum())
-                hit_tpm = int(np.asarray(res_tpm["flags"], dtype=bool)[i].sum())
-                records_joint.append(
-                    {
-                        "user_id": uid,
-                        "hit_count_rpm": hit_rpm,
-                        "hit_count_tpm": hit_tpm,
-                        "hit_count_any": int(hit_rpm > 0 or hit_tpm > 0),
-                        "avg_rpm": float(np.mean(np.asarray(res_rpm["X"])[i])),
-                        "p95_rpm": float(np.quantile(np.asarray(res_rpm["X"])[i], 0.95)),
-                        "max_rpm": float(np.max(np.asarray(res_rpm["X"])[i])),
-                        "avg_tpm": float(np.mean(np.asarray(res_tpm["X"])[i])),
-                        "p95_tpm": float(np.quantile(np.asarray(res_tpm["X"])[i], 0.95)),
-                        "max_tpm": float(np.max(np.asarray(res_tpm["X"])[i])),
-                        "reason_rpm": rr.get("reason", ""),
-                        "reason_tpm": rt.get("reason", ""),
-                        "hit_hours_rpm": rr.get("hit_hours", ""),
-                        "hit_hours_tpm": rt.get("hit_hours", ""),
-                    }
-                )
-            records_joint.sort(key=lambda x: (-(x["hit_count_rpm"] + x["hit_count_tpm"]), -x["max_rpm"], -x["max_tpm"]))
+            cfg = _latency_config_for_sensitivity(sensitivity, max_events)
+            res = detect_latency_anomalies(cfg, df)
+            t = res["time_index"]
 
             session_id = uuid.uuid4().hex
-
             app.config["SESSIONS"][session_id] = {
-
                 "created_at": datetime.now(timezone.utc).isoformat(),
-
-                "file_name": f"RPM={info['file_name_rpm']} ; TPM={info['file_name_tpm']} (池子: {sheet_name})",
-
-                "saved_path": info["file_path_rpm"],
-                "saved_path_rpm": info["file_path_rpm"],
-                "saved_path_tpm": info["file_path_tpm"],
-
-                "start_time": start_time.isoformat(timespec="minutes"),
-
-                "cfg": asdict(cfg),
-                "analysis_mode": "dual",
-
+                "analysis_mode": "latency",
+                "file_name": f"{info['file_name']} (池子: {sheet_name})",
+                "saved_path": info["file_path"],
+                "sheet_name": sheet_name,
+                "sensitivity_mode": sensitivity,
+                "sensitivity_mode_label": _latency_sensitivity_label(sensitivity),
                 "t": [dt.isoformat() for dt in t],
-
-                "h_cols": h_cols,
-
-                "S": res_rpm["S"].tolist(),
-                "S_rpm": res_rpm["S"].tolist(),
-                "S_tpm": res_tpm["S"].tolist(),
-
-                "system_median": np.asarray(res_rpm["system_median"], dtype=float).tolist(),
-                "system_median_rpm": np.asarray(res_rpm["system_median"], dtype=float).tolist(),
-                "system_median_tpm": np.asarray(res_tpm["system_median"], dtype=float).tolist(),
-
-                "system_ratio": np.asarray(res_rpm["system_ratio"], dtype=float).tolist(),
-                "system_ratio_rpm": np.asarray(res_rpm["system_ratio"], dtype=float).tolist(),
-                "system_ratio_tpm": np.asarray(res_tpm["system_ratio"], dtype=float).tolist(),
-
-                "sys_anom": res_rpm["sys_anom"].astype(bool).tolist(),
-                "sys_anom_rpm": res_rpm["sys_anom"].astype(bool).tolist(),
-                "sys_anom_tpm": res_tpm["sys_anom"].astype(bool).tolist(),
-
-                "sys_event_mask": np.asarray(sys_event_mask_joint, dtype=bool).tolist(),
-                "sys_event_mask_rpm": res_rpm["sys_event_mask"].astype(bool).tolist(),
-                "sys_event_mask_tpm": res_tpm["sys_event_mask"].astype(bool).tolist(),
-
-                "events": events_joint,
-                "events_rpm": res_rpm["events"],
-                "events_tpm": res_tpm["events"],
-
-                "event_reports": event_reports_joint,
-                "event_reports_rpm": res_rpm["event_reports"],
-                "event_reports_tpm": res_tpm["event_reports"],
-
-                "user_ids": user_ids,
-
-                "records_csv": pd.DataFrame.from_records(records_joint).to_csv(index=False, encoding="utf-8"),
-
-                "records_json": records_joint,
-                "records_json_rpm": res_rpm["records"].to_dict(orient="records"),
-                "records_json_tpm": res_tpm["records"].to_dict(orient="records"),
-
-                "system_stats": system_stats_joint,
-                "system_stats_rpm": stats_rpm,
-                "system_stats_tpm": stats_tpm,
-
-                "X": res_rpm["X"].tolist(),
-                "X_rpm": res_rpm["X"].tolist(),
-                "X_tpm": res_tpm["X"].tolist(),
-
-                "flags": np.asarray(res_rpm["flags"], dtype=bool).tolist(),
-                "flags_rpm": np.asarray(res_rpm["flags"], dtype=bool).tolist(),
-                "flags_tpm": np.asarray(res_tpm["flags"], dtype=bool).tolist(),
-                "flags_any": (np.asarray(res_rpm["flags"], dtype=bool) | np.asarray(res_tpm["flags"], dtype=bool)).tolist(),
-
-                "growth": res_rpm["growth"].tolist(),
-                "growth_rpm": res_rpm["growth"].tolist(),
-                "growth_tpm": res_tpm["growth"].tolist(),
-
-                "abs_z": res_rpm["abs_z"].tolist(),
-                "abs_z_rpm": res_rpm["abs_z"].tolist(),
-                "abs_z_tpm": res_tpm["abs_z"].tolist(),
-
-                "share_z": res_rpm["share_z"].tolist(),
-                "share_z_rpm": res_rpm["share_z"].tolist(),
-                "share_z_tpm": res_tpm["share_z"].tolist(),
-
+                "cfg": res["config_echo"],
+                "user_ids": res["user_ids"],
+                "system_rpm": np.asarray(res["system_rpm"], dtype=float).tolist(),
+                "system_tpm": np.asarray(res["system_tpm"], dtype=float).tolist(),
+                "system_ttft": np.asarray(res["system_ttft"], dtype=float).tolist(),
+                "system_tpot": np.asarray(res["system_tpot"], dtype=float).tolist(),
+                "system_prompt_tokens": np.asarray(res["system_prompt_tokens"], dtype=float).tolist(),
+                "system_completion_tokens": np.asarray(res["system_completion_tokens"], dtype=float).tolist(),
+                "sys_anom": np.asarray(res["sys_anom"], dtype=bool).tolist(),
+                "sys_anom_ttft": np.asarray(res["sys_anom_ttft"], dtype=bool).tolist(),
+                "sys_anom_tpot": np.asarray(res["sys_anom_tpot"], dtype=bool).tolist(),
+                "sys_event_mask": np.asarray(res["sys_event_mask"], dtype=bool).tolist(),
+                "events": res["events"],
+                "event_reports": res["event_reports"],
+                "records_json": res["records"].to_dict(orient="records"),
+                "records_csv": res["records"].to_csv(index=False, encoding="utf-8"),
+                "system_stats": res["system_stats"],
+                "rpm": np.asarray(res["rpm"], dtype=float).tolist(),
+                "tpm": np.asarray(res["tpm"], dtype=float).tolist(),
+                "ttft": np.asarray(res["ttft"], dtype=float).tolist(),
+                "tpot": np.asarray(res["tpot"], dtype=float).tolist(),
+                "prompt_tokens": np.asarray(res["prompt_tokens"], dtype=float).tolist(),
+                "completion_tokens": np.asarray(res["completion_tokens"], dtype=float).tolist(),
+                "flags": np.asarray(res["flags"], dtype=bool).tolist(),
+                "time_step_minutes": int(res["time_step_minutes"]),
             }
-
             return redirect(url_for("results", session_id=session_id))
-
         except Exception as e:
-
             flash(f"分析失败：{e}", "danger")
-
             return redirect(url_for("pool_select", upload_id=upload_id))
 
 
@@ -1221,100 +902,70 @@ def create_app() -> Flask:
 
 
         t = [datetime.fromisoformat(x) for x in s["t"]]
+        system_fig = build_latency_system_figure(
+            t,
+            np_array(s["system_ttft"]),
+            np_array(s["system_tpot"]),
+            np_array(s["system_rpm"]),
+            np_array(s["system_tpm"]),
+            np_bool(s["sys_anom_ttft"]),
+            np_bool(s["sys_anom_tpot"]),
+            s.get("events", []),
+            float(s["cfg"].get("ttft_sla", 25.0)),
+            float(s["cfg"].get("tpot_sla", 45.0)),
+            float(s["cfg"].get("ttft_sla", 25.0)) * float(s["cfg"].get("severe_ratio", 1.3)),
+            float(s["cfg"].get("tpot_sla", 45.0)) * float(s["cfg"].get("severe_ratio", 1.3)),
+        )
+        system_fig_html = pio.to_html(system_fig, full_html=False, include_plotlyjs="inline")
 
-        is_dual = str(s.get("analysis_mode", "")) == "dual"
-
-        ratio_threshold = float(s["cfg"].get("sys_ratio_threshold", 1.10))
-        if is_dual:
-            system_fig = build_system_dual_figure(
-                t,
-                np_array(s.get("S_rpm", s["S"])),
-                np_array(s.get("S_tpm", s["S"])),
-                np_array(s.get("system_ratio_rpm", s["system_ratio"])),
-                np_array(s.get("system_ratio_tpm", s["system_ratio"])),
-                np_bool(s.get("sys_anom_rpm", s["sys_anom"])),
-                np_bool(s.get("sys_anom_tpm", s["sys_anom"])),
-                s.get("events", []),
-                ratio_threshold,
-            )
-            system_fig_html = pio.to_html(system_fig, full_html=False, include_plotlyjs="inline")
-            system_fig_tpm_html = ""
-        else:
-            system_fig = build_system_figure(
-                t,
-                np_array(s["S"]),
-                np_array(s["system_median"]),
-                np_array(s["system_ratio"]),
-                np_bool(s["sys_anom"]),
-                np_bool(s["sys_event_mask"]),
-                s.get("events", []),
-                ratio_threshold,
-            )
-            system_fig_html = pio.to_html(system_fig, full_html=False, include_plotlyjs="inline")
-            system_fig_tpm_html = ""
-
+        user_ids = s["user_ids"]
+        rpm = np_array(s["rpm"])
+        tpm = np_array(s["tpm"])
+        ttft = np_array(s["ttft"])
+        tpot = np_array(s["tpot"])
+        prompt = np_array(s["prompt_tokens"])
+        completion = np_array(s["completion_tokens"])
+        flags = np_bool_matrix(s["flags"])
+        records_by_uid = {r["user_id"]: r for r in s.get("records_json", [])}
         all_users: list[dict[str, Any]] = []
-        if is_dual:
-            all_users = list(s.get("records_json", []))
-            all_users.sort(key=lambda u: (-(int(u.get("hit_count_rpm", 0)) + int(u.get("hit_count_tpm", 0))), -float(u.get("max_rpm", 0.0))))
-        else:
-            # 池子内全部用户数据：user_id, avg_rpm, max_rpm, p95_rpm, hit_count, reason
-            user_ids = s["user_ids"]
-            X = np_array(s["X"])
-            flags = np_bool_matrix(s["flags"])
-            records_by_uid = {r["user_id"]: r for r in s.get("records_json", [])}
-            for i, uid in enumerate(user_ids):
-                x = X[i]
-                rec = records_by_uid.get(uid, {})
-                all_users.append(
-                    {
-                        "user_id": uid,
-                        "avg_rpm": float(np.mean(x)),
-                        "max_rpm": float(np.max(x)),
-                        "p95_rpm": float(np.quantile(x, 0.95)),
-                        "hit_count": int(flags[i].sum()),
-                        "reason": rec.get("reason", ""),
-                    }
-                )
-            all_users.sort(key=lambda u: (-u["hit_count"], -u["max_rpm"]))
+        for idx, uid in enumerate(user_ids):
+            rec = records_by_uid.get(uid, {})
+            all_users.append(
+                {
+                    "user_id": uid,
+                    "hit_count": int(flags[idx].sum()),
+                    "avg_ttft": float(np.mean(ttft[idx])),
+                    "avg_tpot": float(np.mean(tpot[idx])),
+                    "avg_rpm": float(np.mean(rpm[idx])),
+                    "avg_tpm": float(np.mean(tpm[idx])),
+                    "avg_prompt_tokens": float(np.mean(prompt[idx])),
+                    "avg_completion_tokens": float(np.mean(completion[idx])),
+                    "reason": rec.get("reason", ""),
+                }
+            )
+        all_users.sort(key=lambda u: (-u["hit_count"], -u["avg_ttft"], -u["avg_tpot"], u["user_id"]))
 
-        event_reports_view = _format_event_reports_with_time(s.get("event_reports", []), t)
-
-        rootcause_mode_label = "严格" if str(s.get("cfg", {}).get("rootcause_mode", "strict")).lower() == "strict" else "宽松"
+        event_reports_view = _format_latency_event_reports_with_time(s.get("event_reports", []), t)
 
         return render_template(
-
             "results.html",
-
             session_id=session_id,
-
             file_name=s["file_name"],
-
-            start_time=s["start_time"],
-
+            start_time=t[0].isoformat(timespec="minutes") if t else "",
             end_time=t[-1].isoformat(timespec="minutes") if t else "",
-
             cfg=s["cfg"],
-
             system_stats=s["system_stats"],
-
             records=s["records_json"][:200],
-
             event_reports=event_reports_view,
-            rootcause_mode_label=rootcause_mode_label,
-            is_dual=is_dual,
-
             all_users=all_users,
-
             system_fig_html=system_fig_html,
-            system_fig_tpm_html=system_fig_tpm_html,
-
+            sensitivity_mode_label=s.get("sensitivity_mode_label", "均衡"),
+            time_step_minutes=int(s.get("time_step_minutes", 60)),
         )
 
 
 
     @app.get("/user/<session_id>/<user_id>")
-
     def user_detail(session_id: str, user_id: str):
 
         s = _get_session(app, session_id)
@@ -1337,119 +988,74 @@ def create_app() -> Flask:
 
 
 
-        is_dual = str(s.get("analysis_mode", "")) == "dual"
         idx = user_ids.index(user_id)
 
         t = [datetime.fromisoformat(x) for x in s["t"]]
+        user_fig = build_latency_user_figure(
+            t,
+            np_array(s["ttft"])[idx],
+            np_array(s["tpot"])[idx],
+            np_array(s["rpm"])[idx],
+            np_array(s["tpm"])[idx],
+            np_array(s["prompt_tokens"])[idx],
+            np_array(s["completion_tokens"])[idx],
+            np_bool_matrix(s["flags"])[idx],
+            s.get("events", []),
+            float(s["cfg"].get("ttft_sla", 25.0)),
+            float(s["cfg"].get("tpot_sla", 45.0)),
+            float(s["cfg"].get("ttft_sla", 25.0)) * float(s["cfg"].get("severe_ratio", 1.3)),
+            float(s["cfg"].get("tpot_sla", 45.0)) * float(s["cfg"].get("severe_ratio", 1.3)),
+        )
+        user_fig_html = pio.to_html(user_fig, full_html=False, include_plotlyjs="inline")
 
-        x = np_array(s["X"])[idx]
-        flags = np_bool_matrix(s["flags"])[idx]
-        growth = np_array(s["growth"])[idx]
-        abs_z = np_array(s["abs_z"])[idx]
-        share_z = np_array(s["share_z"])[idx]
-        sys_anom = np_bool(s["sys_anom"])
-        sys_event_mask = np_bool(s["sys_event_mask"])
-
-        if is_dual:
-            fig_dual = build_user_dual_figure(
-                t,
-                np_array(s.get("X_rpm", s["X"]))[idx],
-                np_array(s.get("X_tpm", s["X"]))[idx],
-                np_bool_matrix(s.get("flags_rpm", s["flags"]))[idx],
-                np_bool_matrix(s.get("flags_tpm", s["flags"]))[idx],
-            )
-            user_fig_html = pio.to_html(fig_dual, full_html=False, include_plotlyjs="inline")
-            user_fig_tpm_html = ""
-        else:
-            fig = build_user_figure(t, x, flags, sys_anom, sys_event_mask, growth, abs_z, share_z)
-            user_fig_html = pio.to_html(fig, full_html=False, include_plotlyjs="inline")
-            user_fig_tpm_html = ""
-
-
-
-        # 池子/系统曲线（预测上下界 + 异常点），与结果页一致
-
-        ratio_threshold = float(s["cfg"].get("sys_ratio_threshold", 1.1))
-        if is_dual:
-            system_fig = build_system_dual_figure(
-                t,
-                s.get("S_rpm", s["S"]),
-                s.get("S_tpm", s["S"]),
-                s.get("system_ratio_rpm", s["system_ratio"]),
-                s.get("system_ratio_tpm", s["system_ratio"]),
-                s.get("sys_anom_rpm", s["sys_anom"]),
-                s.get("sys_anom_tpm", s["sys_anom"]),
-                s.get("events", s["events"]),
-                ratio_threshold,
-            )
-            system_fig_html = pio.to_html(system_fig, full_html=False, include_plotlyjs="inline")
-            system_fig_tpm_html = ""
-        else:
-            system_fig = build_system_figure(
-                t,
-                s["S"],
-                s["system_median"],
-                s["system_ratio"],
-                s["sys_anom"],
-                s["sys_event_mask"],
-                s["events"],
-                ratio_threshold,
-            )
-            system_fig_html = pio.to_html(system_fig, full_html=False, include_plotlyjs="inline")
-            system_fig_tpm_html = ""
-
-
-
-        # Lookup summary row
+        system_fig = build_latency_system_figure(
+            t,
+            np_array(s["system_ttft"]),
+            np_array(s["system_tpot"]),
+            np_array(s["system_rpm"]),
+            np_array(s["system_tpm"]),
+            np_bool(s["sys_anom_ttft"]),
+            np_bool(s["sys_anom_tpot"]),
+            s.get("events", []),
+            float(s["cfg"].get("ttft_sla", 25.0)),
+            float(s["cfg"].get("tpot_sla", 45.0)),
+            float(s["cfg"].get("ttft_sla", 25.0)) * float(s["cfg"].get("severe_ratio", 1.3)),
+            float(s["cfg"].get("tpot_sla", 45.0)) * float(s["cfg"].get("severe_ratio", 1.3)),
+        )
+        system_fig_html = pio.to_html(system_fig, full_html=False, include_plotlyjs="inline")
 
         row = next((r for r in s["records_json"] if r["user_id"] == user_id), None)
-        row_dual = None
-        if is_dual:
-            row_rpm = next((r for r in s.get("records_json_rpm", []) if r["user_id"] == user_id), None)
-            row_tpm = next((r for r in s.get("records_json_tpm", []) if r["user_id"] == user_id), None)
-            x_rpm = np_array(s.get("X_rpm", s["X"]))[idx]
-            x_tpm = np_array(s.get("X_tpm", s["X"]))[idx]
-            flags_rpm = np_bool_matrix(s.get("flags_rpm", s["flags"]))[idx]
-            flags_tpm = np_bool_matrix(s.get("flags_tpm", s["flags"]))[idx]
-            row_dual = {
-                "hit_count_rpm": int(flags_rpm.sum()),
-                "hit_count_tpm": int(flags_tpm.sum()),
-                "avg_rpm": float(np.mean(x_rpm)),
-                "p95_rpm": float(np.quantile(x_rpm, 0.95)),
-                "max_rpm": float(np.max(x_rpm)),
-                "avg_tpm": float(np.mean(x_tpm)),
-                "p95_tpm": float(np.quantile(x_tpm, 0.95)),
-                "max_tpm": float(np.max(x_tpm)),
-                "reason_rpm": (row_rpm or {}).get("reason", ""),
-                "reason_tpm": (row_tpm or {}).get("reason", ""),
-                "hit_hours_rpm": (row_rpm or {}).get("hit_hours", ""),
-                "hit_hours_tpm": (row_tpm or {}).get("hit_hours", ""),
+        if row is None:
+            row = {
+                "user_id": user_id,
+                "hit_count": int(np_bool_matrix(s["flags"])[idx].sum()),
+                "hit_hours": "",
+                "reason": "",
+                "avg_rpm": float(np.mean(np_array(s["rpm"])[idx])),
+                "p95_rpm": float(np.quantile(np_array(s["rpm"])[idx], 0.95)),
+                "max_rpm": float(np.max(np_array(s["rpm"])[idx])),
+                "avg_tpm": float(np.mean(np_array(s["tpm"])[idx])),
+                "p95_tpm": float(np.quantile(np_array(s["tpm"])[idx], 0.95)),
+                "max_tpm": float(np.max(np_array(s["tpm"])[idx])),
+                "avg_ttft": float(np.mean(np_array(s["ttft"])[idx])),
+                "p95_ttft": float(np.quantile(np_array(s["ttft"])[idx], 0.95)),
+                "max_ttft": float(np.max(np_array(s["ttft"])[idx])),
+                "avg_tpot": float(np.mean(np_array(s["tpot"])[idx])),
+                "p95_tpot": float(np.quantile(np_array(s["tpot"])[idx], 0.95)),
+                "max_tpot": float(np.max(np_array(s["tpot"])[idx])),
+                "avg_prompt_tokens": float(np.mean(np_array(s["prompt_tokens"])[idx])),
+                "avg_completion_tokens": float(np.mean(np_array(s["completion_tokens"])[idx])),
             }
 
-
-
         return render_template(
-
             "user.html",
-
             session_id=session_id,
-
             file_name=s["file_name"],
-
             user_id=user_id,
-
             row=row,
-            row_dual=row_dual,
-            is_dual=is_dual,
-
             user_fig_html=user_fig_html,
-            user_fig_tpm_html=user_fig_tpm_html,
-
             system_fig_html=system_fig_html,
-            system_fig_tpm_html=system_fig_tpm_html,
-
             cfg=s["cfg"],
-
         )
 
 
@@ -1479,54 +1085,22 @@ def create_app() -> Flask:
 
 
         ev = reports[event_idx]
-        is_dual = str(s.get("analysis_mode", "")) == "dual"
-        if is_dual:
-            culprits_for_advice = (ev.get("culprits_rpm", []) or []) + (ev.get("culprits_tpm", []) or [])
-            ev_for_advice = dict(ev)
-            ev_for_advice["culprits"] = culprits_for_advice
-            recommendations = build_recommendations(ev_for_advice)
-        else:
-            recommendations = build_recommendations(ev)
-
-
-
-        # Human-friendly time range
-
         t = [datetime.fromisoformat(x) for x in s["t"]]
-
         a = int(ev["start_hour"])
-
         b = int(ev["end_hour"])
-
         start_dt = t[a].isoformat(timespec="minutes") if 0 <= a < len(t) else ""
-
-        end_dt = (t[b] + timedelta(hours=1)).isoformat(timespec="minutes") if 0 <= b < len(t) else ""
-
-        event_view = _format_event_reports_with_time([ev], t)[0]
-
-
+        end_dt = t[b].isoformat(timespec="minutes") if 0 <= b < len(t) else ""
+        event_view = _format_latency_event_reports_with_time([ev], t)[0]
 
         return render_template(
-
             "event.html",
-
             session_id=session_id,
-
             file_name=s["file_name"],
-
             event_idx=event_idx,
-
             ev=event_view,
-            is_dual=is_dual,
-
             start_dt=start_dt,
-
             end_dt=end_dt,
-
-            recommendations=recommendations,
-
             cfg=s["cfg"],
-
         )
 
 
@@ -1766,6 +1340,30 @@ def np_bool_matrix(x: Any) -> Any:
 
 
     return np.asarray(x, dtype=bool)
+
+
+def _format_latency_event_reports_with_time(event_reports: list[dict[str, Any]], t: list[datetime]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    n = len(t)
+    for ev in event_reports:
+        e = dict(ev)
+        a = int(e.get("start_hour", -1))
+        b = int(e.get("end_hour", -1))
+        peak_ttft = int(e.get("system_peak_hour_ttft", -1))
+        peak_tpot = int(e.get("system_peak_hour_tpot", -1))
+        e["start_time_label"] = t[a].strftime("%Y-%m-%d %H:%M") if 0 <= a < n else ""
+        e["end_time_label"] = t[b].strftime("%Y-%m-%d %H:%M") if 0 <= b < n else ""
+        e["system_peak_time_label_ttft"] = t[peak_ttft].strftime("%Y-%m-%d %H:%M") if 0 <= peak_ttft < n else ""
+        e["system_peak_time_label_tpot"] = t[peak_tpot].strftime("%Y-%m-%d %H:%M") if 0 <= peak_tpot < n else ""
+        culprits: list[dict[str, Any]] = []
+        for culprit in e.get("culprits", []) or []:
+            c = dict(culprit)
+            peak_hour = int(c.get("peak_hour", -1))
+            c["peak_time_label"] = t[peak_hour].strftime("%Y-%m-%d %H:%M") if 0 <= peak_hour < n else ""
+            culprits.append(c)
+        e["culprits"] = culprits
+        out.append(e)
+    return out
 
 
 
@@ -2383,6 +1981,248 @@ def build_user_dual_figure(
         xaxis=dict(domain=_DUAL_X_DOMAIN),
         yaxis=dict(anchor="x", side="left", position=0.0),
         yaxis2=dict(anchor="x", overlaying="y", side="right", position=1.0),
+    )
+    return fig
+
+
+def build_latency_system_figure(
+    t: list[datetime],
+    system_ttft: Any,
+    system_tpot: Any,
+    system_rpm: Any,
+    system_tpm: Any,
+    sys_anom_ttft: Any,
+    sys_anom_tpot: Any,
+    events: Any,
+    ttft_sla: float,
+    tpot_sla: float,
+    ttft_severe: float,
+    tpot_severe: float,
+) -> go.Figure:
+    fig = make_subplots(
+        rows=2,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.08,
+        row_heights=[0.55, 0.45],
+        specs=[[{"secondary_y": True}], [{"secondary_y": True}]],
+        subplot_titles=("系统 TTFT / TPOT", "系统 RPM / TPM"),
+    )
+
+    system_ttft = np.asarray(system_ttft, dtype=float)
+    system_tpot = np.asarray(system_tpot, dtype=float)
+    system_rpm = np.asarray(system_rpm, dtype=float)
+    system_tpm = np.asarray(system_tpm, dtype=float)
+    sys_anom_ttft = np.asarray(sys_anom_ttft, dtype=bool)
+    sys_anom_tpot = np.asarray(sys_anom_tpot, dtype=bool)
+
+    fig.add_trace(
+        go.Scatter(x=t, y=system_ttft, mode="lines", name="SystemTTFT", line=dict(color="#d63384")),
+        row=1,
+        col=1,
+        secondary_y=False,
+    )
+    fig.add_trace(
+        go.Scatter(x=t, y=system_tpot, mode="lines", name="SystemTPOT", line=dict(color="#fd7e14")),
+        row=1,
+        col=1,
+        secondary_y=True,
+    )
+    fig.add_hline(y=ttft_sla, line_dash="dash", line_color="rgba(214,51,132,0.55)", row=1, col=1, secondary_y=False)
+    fig.add_hline(y=ttft_severe, line_dash="dot", line_color="rgba(214,51,132,0.85)", row=1, col=1, secondary_y=False)
+    fig.add_hline(y=tpot_sla, line_dash="dash", line_color="rgba(253,126,20,0.55)", row=1, col=1, secondary_y=True)
+    fig.add_hline(y=tpot_severe, line_dash="dot", line_color="rgba(253,126,20,0.85)", row=1, col=1, secondary_y=True)
+
+    ttft_idx = np.where(sys_anom_ttft)[0]
+    if ttft_idx.size:
+        fig.add_trace(
+            go.Scatter(
+                x=[t[i] for i in ttft_idx],
+                y=[system_ttft[i] for i in ttft_idx],
+                mode="markers",
+                name="TTFTAnomaly",
+                marker=dict(size=8, color="#d63384", symbol="diamond"),
+            ),
+            row=1,
+            col=1,
+            secondary_y=False,
+        )
+    tpot_idx = np.where(sys_anom_tpot)[0]
+    if tpot_idx.size:
+        fig.add_trace(
+            go.Scatter(
+                x=[t[i] for i in tpot_idx],
+                y=[system_tpot[i] for i in tpot_idx],
+                mode="markers",
+                name="TPOTAnomaly",
+                marker=dict(size=7, color="#fd7e14", symbol="circle"),
+            ),
+            row=1,
+            col=1,
+            secondary_y=True,
+        )
+
+    fig.add_trace(
+        go.Scatter(x=t, y=system_rpm, mode="lines", name="SystemRPM", line=dict(color="#0d6efd")),
+        row=2,
+        col=1,
+        secondary_y=False,
+    )
+    fig.add_trace(
+        go.Scatter(x=t, y=system_tpm, mode="lines", name="SystemTPM", line=dict(color="#20c997")),
+        row=2,
+        col=1,
+        secondary_y=True,
+    )
+
+    step = (t[1] - t[0]) if len(t) > 1 else timedelta(hours=1)
+    for (a, b) in events or []:
+        if a < 0 or b >= len(t):
+            continue
+        for row in (1, 2):
+            fig.add_vrect(
+                x0=t[a],
+                x1=t[b] + step,
+                fillcolor="rgba(255, 193, 7, 0.12)",
+                line_width=0,
+                row=row,
+                col=1,
+            )
+
+    fig.update_yaxes(title_text="TTFT (s)", row=1, col=1, secondary_y=False)
+    fig.update_yaxes(title_text="TPOT (ms)", row=1, col=1, secondary_y=True)
+    fig.update_yaxes(title_text="RPM", row=2, col=1, secondary_y=False)
+    fig.update_yaxes(title_text="TPM", row=2, col=1, secondary_y=True)
+    fig.update_xaxes(title_text="时间", row=2, col=1)
+    fig.update_layout(
+        title="系统时延与负载概览",
+        template="plotly_white",
+        width=_CHART_WIDTH,
+        height=680,
+        margin=_CHART_MARGIN,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+    )
+    return fig
+
+
+def build_latency_user_figure(
+    t: list[datetime],
+    ttft: Any,
+    tpot: Any,
+    rpm: Any,
+    tpm: Any,
+    prompt_tokens: Any,
+    completion_tokens: Any,
+    flags: Any,
+    events: Any,
+    ttft_sla: float,
+    tpot_sla: float,
+    ttft_severe: float,
+    tpot_severe: float,
+) -> go.Figure:
+    fig = make_subplots(
+        rows=3,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.06,
+        row_heights=[0.4, 0.3, 0.3],
+        specs=[[{"secondary_y": True}], [{"secondary_y": True}], [{"secondary_y": True}]],
+        subplot_titles=("用户 TTFT / TPOT", "用户 RPM / TPM", "输入 / 输出长度"),
+    )
+
+    ttft = np.asarray(ttft, dtype=float)
+    tpot = np.asarray(tpot, dtype=float)
+    rpm = np.asarray(rpm, dtype=float)
+    tpm = np.asarray(tpm, dtype=float)
+    prompt_tokens = np.asarray(prompt_tokens, dtype=float)
+    completion_tokens = np.asarray(completion_tokens, dtype=float)
+    flags = np.asarray(flags, dtype=bool)
+
+    fig.add_trace(
+        go.Scatter(x=t, y=ttft, mode="lines", name="UserTTFT", line=dict(color="#d63384")),
+        row=1,
+        col=1,
+        secondary_y=False,
+    )
+    fig.add_trace(
+        go.Scatter(x=t, y=tpot, mode="lines", name="UserTPOT", line=dict(color="#fd7e14")),
+        row=1,
+        col=1,
+        secondary_y=True,
+    )
+    fig.add_hline(y=ttft_sla, line_dash="dash", line_color="rgba(214,51,132,0.55)", row=1, col=1, secondary_y=False)
+    fig.add_hline(y=ttft_severe, line_dash="dot", line_color="rgba(214,51,132,0.85)", row=1, col=1, secondary_y=False)
+    fig.add_hline(y=tpot_sla, line_dash="dash", line_color="rgba(253,126,20,0.55)", row=1, col=1, secondary_y=True)
+    fig.add_hline(y=tpot_severe, line_dash="dot", line_color="rgba(253,126,20,0.85)", row=1, col=1, secondary_y=True)
+
+    hit_idx = np.where(flags)[0]
+    if hit_idx.size:
+        fig.add_trace(
+            go.Scatter(
+                x=[t[i] for i in hit_idx],
+                y=[ttft[i] for i in hit_idx],
+                mode="markers",
+                name="RootCauseHit",
+                marker=dict(size=9, color="#dc3545", symbol="diamond"),
+            ),
+            row=1,
+            col=1,
+            secondary_y=False,
+        )
+
+    fig.add_trace(
+        go.Scatter(x=t, y=rpm, mode="lines", name="UserRPM", line=dict(color="#0d6efd")),
+        row=2,
+        col=1,
+        secondary_y=False,
+    )
+    fig.add_trace(
+        go.Scatter(x=t, y=tpm, mode="lines", name="UserTPM", line=dict(color="#20c997")),
+        row=2,
+        col=1,
+        secondary_y=True,
+    )
+    fig.add_trace(
+        go.Scatter(x=t, y=prompt_tokens, mode="lines", name="PromptTokens", line=dict(color="#6f42c1")),
+        row=3,
+        col=1,
+        secondary_y=False,
+    )
+    fig.add_trace(
+        go.Scatter(x=t, y=completion_tokens, mode="lines", name="CompletionTokens", line=dict(color="#198754")),
+        row=3,
+        col=1,
+        secondary_y=True,
+    )
+
+    step = (t[1] - t[0]) if len(t) > 1 else timedelta(hours=1)
+    for (a, b) in events or []:
+        if a < 0 or b >= len(t):
+            continue
+        for row in (1, 2, 3):
+            fig.add_vrect(
+                x0=t[a],
+                x1=t[b] + step,
+                fillcolor="rgba(255, 193, 7, 0.12)",
+                line_width=0,
+                row=row,
+                col=1,
+            )
+
+    fig.update_yaxes(title_text="TTFT (s)", row=1, col=1, secondary_y=False)
+    fig.update_yaxes(title_text="TPOT (ms)", row=1, col=1, secondary_y=True)
+    fig.update_yaxes(title_text="RPM", row=2, col=1, secondary_y=False)
+    fig.update_yaxes(title_text="TPM", row=2, col=1, secondary_y=True)
+    fig.update_yaxes(title_text="Prompt", row=3, col=1, secondary_y=False)
+    fig.update_yaxes(title_text="Completion", row=3, col=1, secondary_y=True)
+    fig.update_xaxes(title_text="时间", row=3, col=1)
+    fig.update_layout(
+        title="用户时序与根因证据",
+        template="plotly_white",
+        width=_CHART_WIDTH,
+        height=860,
+        margin=_CHART_MARGIN,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
     )
     return fig
 

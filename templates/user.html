@@ -15,175 +15,74 @@
     </div>
   </div>
 
-  {% if is_dual %}
-    <div class="card shadow-sm mb-3">
-      <div class="card-body">
-        <h6 class="mb-2">池子/系统曲线（RPM/TPM 双轴）</h6>
-        <div class="plotly-chart">
-          {{ system_fig_html|safe }}
-        </div>
-        <div class="text-secondary small mt-2">
-          左轴为 RPM，右轴为 TPM，事件窗口为黄色高亮。
+  <div class="row g-3 mb-3">
+    <div class="col-md-3">
+      <div class="card stat-card shadow-sm">
+        <div class="card-body">
+          <div class="stat-label">命中次数</div>
+          <div class="stat-value">{{ row.hit_count }}</div>
+          <div class="stat-sub text-secondary">root cause hits</div>
         </div>
       </div>
     </div>
-  {% else %}
-    <div class="card shadow-sm mb-3">
-      <div class="card-body">
-        <h6 class="mb-2">池子/系统曲线（预测上下界与异常点）</h6>
-        <div class="plotly-chart">
-          {{ system_fig_html|safe }}
-        </div>
-        <div class="text-secondary small mt-2">
-          上图：系统总量、季节中位数、阈值带与系统异常点；下图：S/中位数 ratio 与阈值线。事件窗口为黄色高亮。
+    <div class="col-md-3">
+      <div class="card stat-card shadow-sm">
+        <div class="card-body">
+          <div class="stat-label">平均 TTFT</div>
+          <div class="stat-value">{{ "%.2f"|format(row.avg_ttft) }}</div>
+          <div class="stat-sub text-secondary">P95={{ "%.2f"|format(row.p95_ttft) }}</div>
         </div>
       </div>
     </div>
-  {% endif %}
+    <div class="col-md-3">
+      <div class="card stat-card shadow-sm">
+        <div class="card-body">
+          <div class="stat-label">平均 TPOT</div>
+          <div class="stat-value">{{ "%.2f"|format(row.avg_tpot) }}</div>
+          <div class="stat-sub text-secondary">P95={{ "%.2f"|format(row.p95_tpot) }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="card stat-card shadow-sm">
+        <div class="card-body">
+          <div class="stat-label">原因标签</div>
+          <div class="stat-value small">{{ row.reason if row.reason else "—" }}</div>
+          <div class="stat-sub text-secondary">scope tags</div>
+        </div>
+      </div>
+    </div>
+  </div>
 
-  {% if is_dual and row_dual %}
-    <div class="card shadow-sm mb-3">
-      <div class="card-body">
-        <h6 class="mb-2">用户双指标汇总（RPM + TPM）</h6>
-        <div class="table-responsive">
-          <table class="table table-sm align-middle mb-0">
-            <thead>
-              <tr class="text-secondary">
-                <th>指标</th>
-                <th class="text-end">命中数</th>
-                <th class="text-end">均值</th>
-                <th class="text-end">P95</th>
-                <th class="text-end">峰值</th>
-                <th>原因</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td><b>RPM</b></td>
-                <td class="text-end">{{ row_dual.hit_count_rpm }}</td>
-                <td class="text-end">{{ "%.1f"|format(row_dual.avg_rpm) }}</td>
-                <td class="text-end">{{ "%.1f"|format(row_dual.p95_rpm) }}</td>
-                <td class="text-end">{{ "%.1f"|format(row_dual.max_rpm) }}</td>
-                <td class="small text-secondary">{{ row_dual.reason_rpm if row_dual.reason_rpm else "—" }}</td>
-              </tr>
-              <tr>
-                <td><b>TPM</b></td>
-                <td class="text-end">{{ row_dual.hit_count_tpm }}</td>
-                <td class="text-end">{{ "%.1f"|format(row_dual.avg_tpm) }}</td>
-                <td class="text-end">{{ "%.1f"|format(row_dual.p95_tpm) }}</td>
-                <td class="text-end">{{ "%.1f"|format(row_dual.max_tpm) }}</td>
-                <td class="small text-secondary">{{ row_dual.reason_tpm if row_dual.reason_tpm else "—" }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+  <div class="card shadow-sm mb-3">
+    <div class="card-body">
+      <h6 class="mb-2">系统曲线</h6>
+      <div class="plotly-chart">
+        {{ system_fig_html|safe }}
       </div>
     </div>
-  {% elif row %}
-    <div class="row g-3 mb-3">
-      <div class="col-md-3">
-        <div class="card stat-card shadow-sm">
-          <div class="card-body">
-            <div class="stat-label">命中次数</div>
-            <div class="stat-value">{{ row.hit_count }}</div>
-            <div class="stat-sub text-secondary">hit_count</div>
-          </div>
-        </div>
-      </div>
-      <div class="col-md-3">
-        <div class="card stat-card shadow-sm">
-          <div class="card-body">
-            <div class="stat-label">平均 RPM</div>
-            <div class="stat-value">{{ "%.1f"|format(row.avg_rpm) }}</div>
-            <div class="stat-sub text-secondary">avg</div>
-          </div>
-        </div>
-      </div>
-      <div class="col-md-3">
-        <div class="card stat-card shadow-sm">
-          <div class="card-body">
-            <div class="stat-label">P95 RPM</div>
-            <div class="stat-value">{{ "%.1f"|format(row.p95_rpm) }}</div>
-            <div class="stat-sub text-secondary">p95</div>
-          </div>
-        </div>
-      </div>
-      <div class="col-md-3">
-        <div class="card stat-card shadow-sm">
-          <div class="card-body">
-            <div class="stat-label">异常原因</div>
-            <div class="stat-value small">
-              <span class="badge {{ 'text-bg-danger' if row.reason=='overload_share_and_growth' else 'text-bg-warning' }}">
-                {{ row.reason }}
-              </span>
-            </div>
-            <div class="stat-sub text-secondary">tooltip 含证据</div>
-          </div>
-        </div>
-      </div>
-    </div>
-  {% endif %}
+  </div>
 
-  {% if is_dual %}
-    <div class="card shadow-sm mb-3">
-      <div class="card-body">
-        <div class="d-flex justify-content-between align-items-center mb-2">
-          <h6 class="mb-0">用户时序图（RPM/TPM 双轴）</h6>
-          <span class="badge text-bg-light">
-            growth_threshold={{ cfg.growth_rate_threshold }} · user_k={{ cfg.user_k }} · share_z={{ cfg.share_z }}
-          </span>
-        </div>
-        <div class="plotly-chart">
-          {{ user_fig_html|safe }}
-        </div>
-        <div class="text-secondary small mt-2">
-          左轴为 RPM，右轴为 TPM。红色菱形为 RPM 异常，橙色圆点为 TPM 异常。
-        </div>
+  <div class="card shadow-sm mb-3">
+    <div class="card-body">
+      <h6 class="mb-2">用户时序与根因证据</h6>
+      <div class="plotly-chart">
+        {{ user_fig_html|safe }}
       </div>
     </div>
-  {% else %}
-    <div class="card shadow-sm mb-3">
-      <div class="card-body">
-        <div class="d-flex justify-content-between align-items-center mb-2">
-          <h6 class="mb-0">时序图（异常点标注）</h6>
-          <span class="badge text-bg-light">
-            growth_threshold={{ cfg.growth_rate_threshold }} · user_k={{ cfg.user_k }} · share_z={{ cfg.share_z }}
-          </span>
-        </div>
-        <div class="plotly-chart">
-          {{ user_fig_html|safe }}
-        </div>
-        <div class="text-secondary small mt-2">
-          红色点为最终判定的异常点。悬浮提示包含：growth_rate、abs_z、share_z（若系统过载）。\n
-        </div>
-      </div>
-    </div>
-  {% endif %}
+  </div>
 
-  {% if is_dual and row_dual %}
-    <div class="card shadow-sm">
-      <div class="card-body">
-        <h6 class="mb-2">命中小时（按指标）</h6>
-        <div class="small text-secondary">RPM：{{ row_dual.hit_hours_rpm if row_dual.hit_hours_rpm else "—" }}</div>
-        <div class="small text-secondary mt-1">TPM：{{ row_dual.hit_hours_tpm if row_dual.hit_hours_tpm else "—" }}</div>
+  <div class="card shadow-sm">
+    <div class="card-body">
+      <h6 class="mb-2">用户概览</h6>
+      <div class="row g-2 small text-secondary">
+        <div class="col-md-3">avg_rpm={{ "%.2f"|format(row.avg_rpm) }}</div>
+        <div class="col-md-3">avg_tpm={{ "%.2f"|format(row.avg_tpm) }}</div>
+        <div class="col-md-3">avg_prompt={{ "%.2f"|format(row.avg_prompt_tokens) }}</div>
+        <div class="col-md-3">avg_completion={{ "%.2f"|format(row.avg_completion_tokens) }}</div>
       </div>
+      <hr />
+      <div class="small text-secondary">hit_hours={{ row.hit_hours if row.hit_hours else "—" }}</div>
     </div>
-  {% elif row %}
-    <div class="card shadow-sm">
-      <div class="card-body">
-        <h6 class="mb-2">命中小时（索引）</h6>
-        <div class="small text-secondary">
-          {{ row.hit_hours }}
-        </div>
-        <hr />
-        <div class="row g-2 small text-secondary">
-          <div class="col-md-4">abs_anom_hits：{{ row.abs_anom_hits }}</div>
-          <div class="col-md-4">share_anom_hits：{{ row.share_anom_hits }}</div>
-          <div class="col-md-4">growth_hits：{{ row.growth_hits }}</div>
-        </div>
-      </div>
-    </div>
-  {% endif %}
-
+  </div>
 {% endblock %}
-

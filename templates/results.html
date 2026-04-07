@@ -6,7 +6,10 @@
     <div>
       <h4 class="mb-1">检测结果</h4>
       <div class="text-secondary small">
-        文件：<code>{{ file_name }}</code> · 时间范围：<code>{{ start_time }}</code> → <code>{{ end_time }}</code>
+        文件：<code>{{ file_name }}</code> · 时间范围：<code>{{ start_time }}</code> 到 <code>{{ end_time }}</code>
+      </div>
+      <div class="text-secondary small">
+        灵敏度：<code>{{ sensitivity_mode_label }}</code> · 时间粒度：<code>{{ time_step_minutes }} 分钟</code>
       </div>
     </div>
     <div class="d-flex gap-2">
@@ -16,259 +19,133 @@
     </div>
   </div>
 
-  {% if is_dual %}
-  <div class="card shadow-sm mb-3">
-    <div class="card-body">
-      <h6 class="mb-2">系统双指标汇总（RPM + TPM）</h6>
-      <div class="table-responsive">
-        <table class="table table-sm align-middle mb-0">
-          <thead>
-            <tr class="text-secondary">
-              <th>指标</th>
-              <th class="text-end">均值</th>
-              <th class="text-end">P95</th>
-              <th class="text-end">峰值</th>
-              <th class="text-end">系统异常点</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td><b>RPM</b></td>
-              <td class="text-end">{{ "%.2f"|format(system_stats.rpm.system_avg) }}</td>
-              <td class="text-end">{{ "%.2f"|format(system_stats.rpm.system_p95) }}</td>
-              <td class="text-end">{{ "%.2f"|format(system_stats.rpm.system_max) }}</td>
-              <td class="text-end">{{ system_stats.rpm.system_anom_hours_count }}</td>
-            </tr>
-            <tr>
-              <td><b>TPM</b></td>
-              <td class="text-end">{{ "%.2f"|format(system_stats.tpm.system_avg) }}</td>
-              <td class="text-end">{{ "%.2f"|format(system_stats.tpm.system_p95) }}</td>
-              <td class="text-end">{{ "%.2f"|format(system_stats.tpm.system_max) }}</td>
-              <td class="text-end">{{ system_stats.tpm.system_anom_hours_count }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-  </div>
-  {% else %}
   <div class="row g-3 mb-3">
     <div class="col-md-3">
       <div class="card stat-card shadow-sm">
         <div class="card-body">
-          <div class="stat-label">系统均值</div>
-          <div class="stat-value">{{ "%.2f"|format(system_stats.system_avg) }}</div>
-          <div class="stat-sub text-secondary">RPM（按小时）</div>
+          <div class="stat-label">TTFT 平均值</div>
+          <div class="stat-value">{{ "%.2f"|format(system_stats.ttft.system_avg) }}</div>
+          <div class="stat-sub text-secondary">SLA={{ "%.2f"|format(system_stats.ttft.sla) }}</div>
         </div>
       </div>
     </div>
     <div class="col-md-3">
       <div class="card stat-card shadow-sm">
         <div class="card-body">
-          <div class="stat-label">系统 P95</div>
-          <div class="stat-value">{{ "%.2f"|format(system_stats.system_p95) }}</div>
-          <div class="stat-sub text-secondary">RPM</div>
+          <div class="stat-label">TPOT 平均值</div>
+          <div class="stat-value">{{ "%.2f"|format(system_stats.tpot.system_avg) }}</div>
+          <div class="stat-sub text-secondary">SLA={{ "%.2f"|format(system_stats.tpot.sla) }}</div>
         </div>
       </div>
     </div>
     <div class="col-md-3">
       <div class="card stat-card shadow-sm">
         <div class="card-body">
-          <div class="stat-label">系统峰值</div>
-          <div class="stat-value">{{ "%.2f"|format(system_stats.system_max) }}</div>
-          <div class="stat-sub text-secondary">RPM</div>
+          <div class="stat-label">异常事件数</div>
+          <div class="stat-value">{{ system_stats.event_count }}</div>
+          <div class="stat-sub text-secondary">异常时窗={{ system_stats.event_hours_count }}</div>
         </div>
       </div>
     </div>
     <div class="col-md-3">
       <div class="card stat-card shadow-sm">
         <div class="card-body">
-          <div class="stat-label">系统异常点</div>
+          <div class="stat-label">系统异常点数</div>
           <div class="stat-value">{{ system_stats.system_anom_hours_count }}</div>
-          <div class="stat-sub text-secondary">红菱形标注</div>
+          <div class="stat-sub text-secondary">TTFT / TPOT 任一命中</div>
         </div>
       </div>
     </div>
   </div>
-  {% endif %}
 
-  {% if is_dual %}
   <div class="card shadow-sm mb-3">
     <div class="card-body">
-      <div class="d-flex justify-content-between align-items-center mb-2">
-        <h6 class="mb-0">系统总量时序（RPM/TPM 双轴）</h6>
-        <span class="badge text-bg-light">系统事件数={{ system_stats.event_count }} · 事件小时={{ system_stats.event_hours_count }}</span>
-      </div>
+      <h6 class="mb-2">系统时延与负载时序</h6>
       <div class="plotly-chart">
         {{ system_fig_html|safe }}
       </div>
     </div>
   </div>
-  {% else %}
-  <div class="card shadow-sm mb-3">
-    <div class="card-body">
-      <div class="d-flex justify-content-between align-items-center mb-2">
-        <h6 class="mb-0">系统总量时序</h6>
-        <span class="badge text-bg-light">系统事件数={{ system_stats.event_count }} · 事件小时={{ system_stats.event_hours_count }}</span>
-      </div>
-      <div class="plotly-chart">
-        {{ system_fig_html|safe }}
-      </div>
-    </div>
-  </div>
-  {% endif %}
 
   <div class="card shadow-sm mb-3">
     <div class="card-body">
-      <h6 class="mb-2">系统事件与主因用户（{{ rootcause_mode_label }}根因模式）</h6>
+      <h6 class="mb-2">异常事件与根因定位</h6>
       {% if event_reports and event_reports|length > 0 %}
         <div class="row g-3">
           {% for ev in event_reports %}
             <div class="col-lg-6">
-              <div class="border rounded p-3 bg-white">
+              <div class="border rounded p-3 bg-white h-100">
                 <div class="d-flex justify-content-between align-items-center">
-                  <div class="fw-semibold">事件窗口：{{ ev.start_time_label }} ~ {{ ev.end_time_label }}</div>
-                  <span class="badge text-bg-warning">duration={{ ev.duration_hours }}h</span>
+                  <div class="fw-semibold">{{ ev.start_time_label }} ~ {{ ev.end_time_label }}</div>
+                  <span class="badge text-bg-warning">duration={{ ev.duration_hours }}</span>
                 </div>
-                {% if is_dual %}
-                  <div class="small text-secondary mt-1">
-                    事件类型：<code>{{ ev.rootcause_scope }}</code>
-                  </div>
-                  <div class="small text-secondary mt-1">
-                    RPM峰值：{{ ev.system_peak_time_label_rpm }}（{{ "%.0f"|format(ev.system_peak_rpm) }}）
-                  </div>
-                  <div class="small text-secondary mt-1">
-                    TPM峰值：{{ ev.system_peak_time_label_tpm }}（{{ "%.0f"|format(ev.system_peak_tpm) }}）
-                  </div>
-                {% else %}
-                  <div class="small text-secondary mt-1">
-                    系统峰值：{{ ev.system_peak_time_label }}（{{ "%.0f"|format(ev.system_peak_rpm) }} RPM）
-                  </div>
-                {% endif %}
+                <div class="small text-secondary mt-1">事件类型：<code>{{ ev.rootcause_scope }}</code></div>
+                <div class="small text-secondary mt-1">
+                  TTFT 峰值：{{ ev.system_peak_time_label_ttft }}（{{ "%.2f"|format(ev.system_peak_ttft) }}）
+                </div>
+                <div class="small text-secondary mt-1">
+                  TPOT 峰值：{{ ev.system_peak_time_label_tpot }}（{{ "%.2f"|format(ev.system_peak_tpot) }}）
+                </div>
                 <div class="mt-2">
-                  {% if is_dual %}
-                    <div class="small text-secondary mb-1">RPM 主因用户</div>
-                    {% if ev.culprits_rpm and ev.culprits_rpm|length > 0 %}
-                      <ul class="mb-2">
-                        {% for c in ev.culprits_rpm %}
-                          <li class="small">
-                            <code>{{ c.user_id }}</code>
-                            <span class="text-secondary">贡献占比 {{ "%.1f"|format(c.excess_ratio*100) }}%</span>
-                            <span class="text-secondary">· 峰值 {{ c.peak_time_label }}（{{ "%.0f"|format(c.peak_rpm) }}）</span>
-                            <a class="ms-2" href="{{ url_for('user_detail', session_id=session_id, user_id=c.user_id) }}">详情</a>
-                          </li>
-                        {% endfor %}
-                      </ul>
-                    {% else %}
-                      <div class="small text-secondary mb-2">该窗口未定位 RPM 主因。</div>
-                    {% endif %}
-                    <div class="small text-secondary mb-1">TPM 主因用户</div>
-                    {% if ev.culprits_tpm and ev.culprits_tpm|length > 0 %}
-                      <ul class="mb-0">
-                        {% for c in ev.culprits_tpm %}
-                          <li class="small">
-                            <code>{{ c.user_id }}</code>
-                            <span class="text-secondary">贡献占比 {{ "%.1f"|format(c.excess_ratio*100) }}%</span>
-                            <span class="text-secondary">· 峰值 {{ c.peak_time_label }}（{{ "%.0f"|format(c.peak_rpm) }}）</span>
-                            <a class="ms-2" href="{{ url_for('user_detail', session_id=session_id, user_id=c.user_id) }}">详情</a>
-                          </li>
-                        {% endfor %}
-                      </ul>
-                    {% else %}
-                      <div class="small text-secondary">该窗口未定位 TPM 主因。</div>
-                    {% endif %}
-                  {% elif ev.culprits and ev.culprits|length > 0 %}
-                    <div class="small text-secondary mb-1">主因用户（按超额贡献）</div>
-                    <ul class="mb-0">
+                  {% if ev.culprits and ev.culprits|length > 0 %}
+                    <ul class="mb-2 ps-3">
                       {% for c in ev.culprits %}
                         <li class="small">
                           <code>{{ c.user_id }}</code>
-                          <span class="text-secondary">贡献占比 {{ "%.1f"|format(c.excess_ratio*100) }}%</span>
-                          <span class="text-secondary">· 峰值 {{ c.peak_time_label }}（{{ "%.0f"|format(c.peak_rpm) }}）</span>
-                          <a class="ms-2" href="{{ url_for('user_detail', session_id=session_id, user_id=c.user_id) }}">详情</a>
+                          <span class="text-secondary">根因占比 {{ "%.1f"|format(c.score_ratio * 100) }}%</span>
+                          <span class="text-secondary">· 峰值 {{ c.peak_time_label }}</span>
                         </li>
                       {% endfor %}
                     </ul>
                   {% else %}
-                    <div class="small text-secondary">未定位到主因用户（excess=0）。</div>
+                    <div class="small text-secondary mb-2">当前窗口未定位到主因用户。</div>
                   {% endif %}
-                    <div class="mt-2">
-                      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('event_detail', session_id=session_id, event_idx=loop.index0) }}">
-                        查看处置建议
-                      </a>
-                    </div>
+                  <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('event_detail', session_id=session_id, event_idx=loop.index0) }}">
+                    查看事件详情
+                  </a>
                 </div>
               </div>
             </div>
           {% endfor %}
         </div>
       {% else %}
-        <div class="text-secondary small">未检测到系统事件窗口（可尝试降低系统阈值或检查数据）。</div>
+        <div class="text-secondary small">未检测到异常事件窗口。</div>
       {% endif %}
     </div>
   </div>
 
   <div class="card shadow-sm mb-3">
     <div class="card-body">
-      <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
-        <h6 class="mb-0">池子内用户数据（共 {{ all_users|length }} 个用户，按异常命中数、峰值排序）</h6>
-      </div>
+      <h6 class="mb-2">池子内全部用户概览</h6>
       {% if all_users and all_users|length > 0 %}
         <div class="table-responsive">
           <table class="table table-sm align-middle">
             <thead>
-              {% if is_dual %}
-                <tr class="text-secondary">
-                  <th>用户</th>
-                  <th class="text-end">RPM命中</th>
-                  <th class="text-end">TPM命中</th>
-                  <th class="text-end">均值 RPM</th>
-                  <th class="text-end">均值 TPM</th>
-                  <th class="text-end">峰值 RPM</th>
-                  <th class="text-end">峰值 TPM</th>
-                  <th>原因标签</th>
-                  <th></th>
-                </tr>
-              {% else %}
-                <tr class="text-secondary">
-                  <th>用户</th>
-                  <th class="text-end">异常命中</th>
-                  <th class="text-end">均值 RPM</th>
-                  <th class="text-end">P95</th>
-                  <th class="text-end">峰值</th>
-                  <th>原因标签</th>
-                  <th></th>
-                </tr>
-              {% endif %}
+              <tr class="text-secondary">
+                <th>用户</th>
+                <th class="text-end">命中数</th>
+                <th class="text-end">均值 TTFT</th>
+                <th class="text-end">均值 TPOT</th>
+                <th class="text-end">均值 RPM</th>
+                <th class="text-end">均值 TPM</th>
+                <th class="text-end">均值输入</th>
+                <th class="text-end">均值输出</th>
+                <th>原因标签</th>
+                <th></th>
+              </tr>
             </thead>
             <tbody>
               {% for u in all_users %}
-                <tr class="{{ 'table-warning' if (is_dual and (u.hit_count_rpm > 0 or u.hit_count_tpm > 0)) or (not is_dual and u.hit_count > 0) else '' }}">
+                <tr class="{{ 'table-warning' if u.hit_count > 0 else '' }}">
                   <td><code>{{ u.user_id }}</code></td>
-                  {% if is_dual %}
-                    <td class="text-end">{{ u.hit_count_rpm }}</td>
-                    <td class="text-end">{{ u.hit_count_tpm }}</td>
-                    <td class="text-end">{{ "%.1f"|format(u.avg_rpm) }}</td>
-                    <td class="text-end">{{ "%.1f"|format(u.avg_tpm) }}</td>
-                    <td class="text-end">{{ "%.1f"|format(u.max_rpm) }}</td>
-                    <td class="text-end">{{ "%.1f"|format(u.max_tpm) }}</td>
-                    <td class="small">
-                      RPM: <span class="text-secondary">{{ u.reason_rpm if u.reason_rpm else "—" }}</span><br/>
-                      TPM: <span class="text-secondary">{{ u.reason_tpm if u.reason_tpm else "—" }}</span>
-                    </td>
-                  {% else %}
-                    <td class="text-end">{{ u.hit_count }}</td>
-                    <td class="text-end">{{ "%.1f"|format(u.avg_rpm) }}</td>
-                    <td class="text-end">{{ "%.1f"|format(u.p95_rpm) }}</td>
-                    <td class="text-end">{{ "%.1f"|format(u.max_rpm) }}</td>
-                    <td>
-                      {% if u.reason %}
-                        <span class="badge {{ 'text-bg-danger' if u.reason=='overload_share_and_growth' else 'text-bg-warning' }}">{{ u.reason }}</span>
-                      {% else %}
-                        <span class="text-secondary">—</span>
-                      {% endif %}
-                    </td>
-                  {% endif %}
+                  <td class="text-end">{{ u.hit_count }}</td>
+                  <td class="text-end">{{ "%.2f"|format(u.avg_ttft) }}</td>
+                  <td class="text-end">{{ "%.2f"|format(u.avg_tpot) }}</td>
+                  <td class="text-end">{{ "%.2f"|format(u.avg_rpm) }}</td>
+                  <td class="text-end">{{ "%.2f"|format(u.avg_tpm) }}</td>
+                  <td class="text-end">{{ "%.2f"|format(u.avg_prompt_tokens) }}</td>
+                  <td class="text-end">{{ "%.2f"|format(u.avg_completion_tokens) }}</td>
+                  <td class="small text-secondary">{{ u.reason if u.reason else "—" }}</td>
                   <td class="text-end">
                     <a class="btn btn-sm btn-outline-primary" href="{{ url_for('user_detail', session_id=session_id, user_id=u.user_id) }}">详情</a>
                   </td>
@@ -285,25 +162,24 @@
 
   <div class="card shadow-sm">
     <div class="card-body">
-      <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
-        <h6 class="mb-0">Top 异常用户（最多显示 200 行）</h6>
-        <div class="d-flex gap-2">
-          <span class="badge text-bg-light">user_k={{ cfg.user_k }}</span>
-          <span class="badge text-bg-light">share_z={{ cfg.share_z }}</span>
-          <span class="badge text-bg-light">growth_threshold={{ cfg.growth_rate_threshold }}</span>
+      <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
+        <h6 class="mb-0">Top 根因用户</h6>
+        <div class="small text-secondary">
+          severe_ratio={{ cfg.severe_ratio }} · ttft_sla={{ cfg.ttft_sla }} · tpot_sla={{ cfg.tpot_sla }}
         </div>
       </div>
-
-      {% if records and records|length > 0 and not is_dual %}
+      {% if records and records|length > 0 %}
         <div class="table-responsive">
           <table class="table table-sm align-middle">
             <thead>
               <tr class="text-secondary">
                 <th>user_id</th>
                 <th class="text-end">hit_count</th>
-                <th class="text-end">avg</th>
-                <th class="text-end">p95</th>
-                <th class="text-end">max</th>
+                <th class="text-end">avg TTFT</th>
+                <th class="text-end">avg TPOT</th>
+                <th class="text-end">avg RPM</th>
+                <th class="text-end">avg 输入</th>
+                <th class="text-end">avg 输出</th>
                 <th>reason</th>
                 <th>hit_hours</th>
                 <th></th>
@@ -314,32 +190,24 @@
                 <tr>
                   <td><code>{{ r.user_id }}</code></td>
                   <td class="text-end">{{ r.hit_count }}</td>
-                  <td class="text-end">{{ "%.1f"|format(r.avg_rpm) }}</td>
-                  <td class="text-end">{{ "%.1f"|format(r.p95_rpm) }}</td>
-                  <td class="text-end">{{ "%.1f"|format(r.max_rpm) }}</td>
-                  <td>
-                    <span class="badge {{ 'text-bg-danger' if r.reason=='overload_share_and_growth' else 'text-bg-warning' }}">
-                      {{ r.reason }}
-                    </span>
-                  </td>
-                  <td class="text-secondary small text-truncate" style="max-width: 260px;">
-                    {{ r.hit_hours }}
-                  </td>
+                  <td class="text-end">{{ "%.2f"|format(r.avg_ttft) }}</td>
+                  <td class="text-end">{{ "%.2f"|format(r.avg_tpot) }}</td>
+                  <td class="text-end">{{ "%.2f"|format(r.avg_rpm) }}</td>
+                  <td class="text-end">{{ "%.2f"|format(r.avg_prompt_tokens) }}</td>
+                  <td class="text-end">{{ "%.2f"|format(r.avg_completion_tokens) }}</td>
+                  <td class="small text-secondary">{{ r.reason }}</td>
+                  <td class="small text-secondary text-truncate" style="max-width: 220px;">{{ r.hit_hours }}</td>
                   <td class="text-end">
-                    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('user_detail', session_id=session_id, user_id=r.user_id) }}">
-                      查看详情
-                    </a>
+                    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('user_detail', session_id=session_id, user_id=r.user_id) }}">详情</a>
                   </td>
                 </tr>
               {% endfor %}
             </tbody>
           </table>
         </div>
-      {% elif not is_dual %}
-        <div class="text-secondary">未检测到异常用户（可以尝试降低阈值或检查数据格式）。</div>
+      {% else %}
+        <div class="text-secondary">当前没有命中的根因用户。</div>
       {% endif %}
     </div>
   </div>
-
 {% endblock %}
-
