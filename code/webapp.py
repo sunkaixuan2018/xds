@@ -299,6 +299,17 @@ def _latency_sensitivity_label(sensitivity: str) -> str:
 
 
 
+def _format_seconds(value: Any) -> str:
+    try:
+        return f"{float(value):.3f}"
+    except Exception:
+        return str(value)
+
+
+def _timing_item(label: str, value: Any) -> dict[str, str]:
+    return {"label": label, "seconds": _format_seconds(value)}
+
+
 def create_app() -> Flask:
 
     # webapp.py 移到 code/ 后，显式指定模板和静态资源目录
@@ -826,6 +837,7 @@ def create_app() -> Flask:
 
             return redirect(url_for("pool_select", upload_id=upload_id))
 
+        analysis_request_started = perf_counter()
         try:
             load_started = perf_counter()
             df = pd.read_excel(info["file_path"], sheet_name=sheet_name)
@@ -833,6 +845,7 @@ def create_app() -> Flask:
             if df.empty:
                 raise ValueError("所选 sheet 没有可用数据。")
 
+            config_started = perf_counter()
             sensitivity = request.form.get("sensitivity", "balanced").strip() or "balanced"
             max_events_option = request.form.get("max_events_option", "5").strip().lower()
             if max_events_option == "all":
@@ -844,13 +857,15 @@ def create_app() -> Flask:
                     max_events = 5
 
             cfg = _latency_config_for_sensitivity(sensitivity, max_events)
+            config_seconds = perf_counter() - config_started
             detect_started = perf_counter()
             res = detect_latency_anomalies(cfg, df)
             detect_seconds = perf_counter() - detect_started
             t = res["time_index"]
 
             session_id = uuid.uuid4().hex
-            app.config["SESSIONS"][session_id] = {
+            session_build_started = perf_counter()
+            session_payload = {
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "analysis_mode": "latency",
                 "file_name": f"{info['file_name']} (池子: {sheet_name})",
@@ -887,6 +902,15 @@ def create_app() -> Flask:
                 "flags": np.asarray(res["flags"], dtype=bool).tolist(),
                 "time_step_minutes": int(res["time_step_minutes"]),
             }
+            session_build_seconds = perf_counter() - session_build_started
+            session_payload["analysis_timings"] = {
+                "file_load_seconds": float(file_load_seconds),
+                "config_seconds": float(config_seconds),
+                "detect_seconds": float(detect_seconds),
+                "session_build_seconds": float(session_build_seconds),
+                "analysis_total_seconds": float(perf_counter() - analysis_request_started),
+            }
+            app.config["SESSIONS"][session_id] = session_payload
             return redirect(url_for("results", session_id=session_id))
         except Exception as e:
             flash(f"分析失败：{e}", "danger")
@@ -907,8 +931,11 @@ def create_app() -> Flask:
             return redirect(url_for("index"))
 
 
-
+        results_request_started = perf_counter()
+        restore_started = perf_counter()
         t = [datetime.fromisoformat(x) for x in s["t"]]
+        time_restore_seconds = perf_counter() - restore_started
+        figure_build_started = perf_counter()
         system_fig = build_latency_system_figure(
             t,
             np_array(s["system_ttft"]),
@@ -923,8 +950,12 @@ def create_app() -> Flask:
             float(s["cfg"].get("ttft_sla", 25000.0)) * float(s["cfg"].get("severe_ratio", 1.3)),
             float(s["cfg"].get("tpot_sla", 45.0)) * float(s["cfg"].get("severe_ratio", 1.3)),
         )
+        system_figure_seconds = perf_counter() - figure_build_started
+        figure_html_started = perf_counter()
         system_fig_html = pio.to_html(system_fig, full_html=False, include_plotlyjs="inline")
+        figure_html_seconds = perf_counter() - figure_html_started
 
+        user_summary_started = perf_counter()
         user_ids = s["user_ids"]
         rpm = np_array(s["rpm"])
         tpm = np_array(s["tpm"])
@@ -951,10 +982,38 @@ def create_app() -> Flask:
                 }
             )
         all_users.sort(key=lambda u: (-u["hit_count"], -u["avg_ttft"], -u["avg_tpot"], u["user_id"]))
+        user_summary_seconds = perf_counter() - user_summary_started
 
+        event_format_started = perf_counter()
         event_reports_view = _format_latency_event_reports_with_time(s.get("event_reports", []), t)
+        event_format_seconds = perf_counter() - event_format_started
 
-        return render_template(
+        analysis_timings = s.get("analysis_timings", {})
+        analysis_timing_items = [
+            _timing_item("Analyze Total", analysis_timings.get("analysis_total_seconds", 0.0)),
+            _timing_item("File Load", analysis_timings.get("file_load_seconds", s.get("file_load_seconds", 0.0))),
+            _timing_item("Config Build", analysis_timings.get("config_seconds", 0.0)),
+            _timing_item("Detection", analysis_timings.get("detect_seconds", s.get("detect_seconds", 0.0))),
+            _timing_item("Session Build", analysis_timings.get("session_build_seconds", 0.0)),
+        ]
+        results_pre_render_seconds = perf_counter() - results_request_started
+        template_render_marker = "__RESULTS_TEMPLATE_RENDER_SECONDS__"
+        results_total_marker = "__RESULTS_TOTAL_SECONDS__"
+        end_to_end_marker = "__END_TO_END_SECONDS__"
+        results_timing_items = [
+            _timing_item("Time Restore", time_restore_seconds),
+            _timing_item("Figure Build", system_figure_seconds),
+            _timing_item("Figure HTML", figure_html_seconds),
+            _timing_item("User Summary", user_summary_seconds),
+            _timing_item("Event Format", event_format_seconds),
+            _timing_item("Pre-Render", results_pre_render_seconds),
+            _timing_item("Template Render", template_render_marker),
+            _timing_item("Results Total", results_total_marker),
+            _timing_item("End-to-End", end_to_end_marker),
+        ]
+        render_started = perf_counter()
+
+        rendered = render_template(
             "results.html",
             session_id=session_id,
             file_name=s["file_name"],
@@ -970,7 +1029,16 @@ def create_app() -> Flask:
             time_step_minutes=int(s.get("time_step_minutes", 60)),
             file_load_seconds=float(s.get("file_load_seconds", 0.0)),
             detect_seconds=float(s.get("detect_seconds", 0.0)),
+            analysis_timing_items=analysis_timing_items,
+            results_timing_items=results_timing_items,
         )
+        template_render_seconds = perf_counter() - render_started
+        results_total_seconds = perf_counter() - results_request_started
+        end_to_end_seconds = float(analysis_timings.get("analysis_total_seconds", 0.0)) + results_total_seconds
+        rendered = rendered.replace(template_render_marker, _format_seconds(template_render_seconds), 1)
+        rendered = rendered.replace(results_total_marker, _format_seconds(results_total_seconds), 1)
+        rendered = rendered.replace(end_to_end_marker, _format_seconds(end_to_end_seconds), 1)
+        return rendered
 
 
 
