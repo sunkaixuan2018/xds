@@ -24,6 +24,17 @@
       <div class="small text-secondary mt-1">时间范围：<code>{{ start_dt }}</code> 到 <code>{{ end_dt }}</code></div>
       <div class="small text-secondary mt-1">事件类型：<code>{{ ev.rootcause_scope }}</code></div>
       <div class="small text-secondary mt-1">
+        主导诱因：<code>{{ ev.driver_signal }}</code>
+        · 流量侧={{ "%.1f"|format(ev.traffic_driver_ratio * 100) }}%
+        · 长度侧={{ "%.1f"|format(ev.length_driver_ratio * 100) }}%
+      </div>
+      <div class="small text-secondary mt-1">
+        驱动明细：RPM={{ "%.3f"|format(ev.driver_breakdown.rpm_shift_score) }}
+        · TPM={{ "%.3f"|format(ev.driver_breakdown.tpm_shift_score) }}
+        · 输入={{ "%.3f"|format(ev.driver_breakdown.prompt_shift_score) }}
+        · 输出={{ "%.3f"|format(ev.driver_breakdown.completion_shift_score) }}
+      </div>
+      <div class="small text-secondary mt-1">
         TTFT 峰值：{{ ev.system_peak_time_label_ttft }}（{{ "%.2f"|format(ev.system_peak_ttft) }} ms）
       </div>
       <div class="small text-secondary mt-1">
@@ -44,8 +55,9 @@
                 <th class="text-end">根因占比</th>
                 <th class="text-end">RPM 超额占比</th>
                 <th class="text-end">TPM 超额占比</th>
-                <th class="text-end">输入压力占比</th>
-                <th class="text-end">输出压力占比</th>
+                <th class="text-end">输入变化占比</th>
+                <th class="text-end">输出变化占比</th>
+                <th>诱因判断</th>
                 <th class="text-end">峰值时间</th>
                 <th></th>
               </tr>
@@ -57,8 +69,9 @@
                   <td class="text-end">{{ "%.1f"|format(c.score_ratio * 100) }}%</td>
                   <td class="text-end">{{ "%.1f"|format(c.rpm_excess_ratio * 100) }}%</td>
                   <td class="text-end">{{ "%.1f"|format(c.tpm_excess_ratio * 100) }}%</td>
-                  <td class="text-end">{{ "%.1f"|format(c.prompt_load_ratio * 100) }}%</td>
-                  <td class="text-end">{{ "%.1f"|format(c.completion_load_ratio * 100) }}%</td>
+                  <td class="text-end">{{ "%.1f"|format(c.prompt_delta_ratio * 100) }}%</td>
+                  <td class="text-end">{{ "%.1f"|format(c.completion_delta_ratio * 100) }}%</td>
+                  <td class="small text-secondary">{{ c.driver_signal }}</td>
                   <td class="text-end">{{ c.peak_time_label }}</td>
                   <td class="text-end">
                     <a class="btn btn-sm btn-outline-primary" href="{{ url_for('user_detail', session_id=session_id, user_id=c.user_id) }}">查看用户</a>

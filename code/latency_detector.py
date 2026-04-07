@@ -219,8 +219,8 @@ def _safe_ratio(values: np.ndarray) -> np.ndarray:
 def _combined_local_score(
     rpm_excess: np.ndarray,
     tpm_excess: np.ndarray,
-    prompt_load_excess: np.ndarray,
-    completion_load_excess: np.ndarray,
+    prompt_delta_excess: np.ndarray,
+    completion_delta_excess: np.ndarray,
     weights: tuple[float, float, float, float],
 ) -> np.ndarray:
     w_rpm, w_tpm, w_prompt, w_completion = weights
@@ -228,18 +228,136 @@ def _combined_local_score(
     totals = [
         float(np.sum(rpm_excess)),
         float(np.sum(tpm_excess)),
-        float(np.sum(prompt_load_excess)),
-        float(np.sum(completion_load_excess)),
+        float(np.sum(prompt_delta_excess)),
+        float(np.sum(completion_delta_excess)),
     ]
     if totals[0] > 0:
         score += w_rpm * (rpm_excess / totals[0])
     if totals[1] > 0:
         score += w_tpm * (tpm_excess / totals[1])
     if totals[2] > 0:
-        score += w_prompt * (prompt_load_excess / totals[2])
+        score += w_prompt * (prompt_delta_excess / totals[2])
     if totals[3] > 0:
-        score += w_completion * (completion_load_excess / totals[3])
+        score += w_completion * (completion_delta_excess / totals[3])
     return score
+
+
+def _length_signal(prompt_ratio: float, completion_ratio: float, rpm_ratio: float, tpm_ratio: float) -> str:
+    prompt_ratio = float(prompt_ratio)
+    completion_ratio = float(completion_ratio)
+    traffic_ratio = float(max(rpm_ratio, tpm_ratio))
+    if prompt_ratio <= 0 and completion_ratio <= 0:
+        return "traffic_dominant"
+    if prompt_ratio >= 0.15 and completion_ratio >= 0.15 and (prompt_ratio + completion_ratio) >= max(traffic_ratio, 0.30):
+        return "io_shift_joint"
+    if prompt_ratio >= max(completion_ratio * 1.2, traffic_ratio):
+        return "input_shift_dominant"
+    if completion_ratio >= max(prompt_ratio * 1.2, traffic_ratio):
+        return "output_shift_dominant"
+    if max(prompt_ratio, completion_ratio) >= traffic_ratio:
+        return "length_shift_mixed"
+    return "traffic_dominant"
+
+
+def _positive_shift_score(values: np.ndarray, baseline: np.ndarray) -> float:
+    values = np.asarray(values, dtype=float)
+    baseline = np.asarray(baseline, dtype=float)
+    delta = np.clip(values - baseline, 0.0, None)
+    baseline_abs = np.abs(baseline)
+    valid = np.isfinite(delta) & np.isfinite(baseline_abs)
+    if not valid.any():
+        return 0.0
+    delta_sum = float(np.sum(delta[valid]))
+    if delta_sum <= 0:
+        return 0.0
+    baseline_sum = float(np.sum(baseline_abs[valid]))
+    return float(delta_sum / (baseline_sum + delta_sum + 1e-9))
+
+
+def _dominance_label(primary_score: float, secondary_score: float, primary_label: str, secondary_label: str, mixed_label: str) -> str:
+    primary_score = float(primary_score)
+    secondary_score = float(secondary_score)
+    if primary_score <= 0 and secondary_score <= 0:
+        return "unclear"
+    if primary_score >= secondary_score * 1.2:
+        return primary_label
+    if secondary_score >= primary_score * 1.2:
+        return secondary_label
+    return mixed_label
+
+
+def _event_driver_diagnosis(
+    scope: str,
+    rpm_shift_score: float,
+    tpm_shift_score: float,
+    prompt_shift_score: float,
+    completion_shift_score: float,
+) -> dict[str, Any]:
+    if scope == "ttft_only":
+        traffic_score = float(rpm_shift_score)
+        length_score = float(prompt_shift_score)
+        signal = _dominance_label(
+            traffic_score,
+            length_score,
+            "rpm_rise_dominant",
+            "input_shift_dominant",
+            "rpm_input_mixed",
+        )
+    elif scope == "tpot_only":
+        traffic_score = float(tpm_shift_score)
+        length_score = float(completion_shift_score)
+        signal = _dominance_label(
+            traffic_score,
+            length_score,
+            "tpm_rise_dominant",
+            "output_shift_dominant",
+            "tpm_output_mixed",
+        )
+    else:
+        traffic_score = float(0.5 * rpm_shift_score + 0.5 * tpm_shift_score)
+        length_score = float(0.5 * prompt_shift_score + 0.5 * completion_shift_score)
+        signal = _dominance_label(
+            traffic_score,
+            length_score,
+            "traffic_family_dominant",
+            "length_family_dominant",
+            "traffic_length_mixed",
+        )
+
+    total = traffic_score + length_score
+    if total > 0:
+        traffic_ratio = traffic_score / total
+        length_ratio = length_score / total
+    else:
+        traffic_ratio = 0.0
+        length_ratio = 0.0
+    return {
+        "driver_signal": signal,
+        "traffic_driver_score": float(traffic_score),
+        "length_driver_score": float(length_score),
+        "traffic_driver_ratio": float(traffic_ratio),
+        "length_driver_ratio": float(length_ratio),
+        "rpm_shift_score": float(rpm_shift_score),
+        "tpm_shift_score": float(tpm_shift_score),
+        "prompt_shift_score": float(prompt_shift_score),
+        "completion_shift_score": float(completion_shift_score),
+    }
+
+
+def _culprit_driver_signal(
+    scope: str,
+    rpm_ratio: float,
+    tpm_ratio: float,
+    prompt_ratio: float,
+    completion_ratio: float,
+) -> str:
+    if scope == "ttft_only":
+        return _dominance_label(float(rpm_ratio), float(prompt_ratio), "rpm_rise_dominant", "input_shift_dominant", "rpm_input_mixed")
+    if scope == "tpot_only":
+        return _dominance_label(float(tpm_ratio), float(completion_ratio), "tpm_rise_dominant", "output_shift_dominant", "tpm_output_mixed")
+    traffic_ratio = float(0.5 * rpm_ratio + 0.5 * tpm_ratio)
+    length_ratio = float(0.5 * prompt_ratio + 0.5 * completion_ratio)
+    return _dominance_label(traffic_ratio, length_ratio, "traffic_family_dominant", "length_family_dominant", "traffic_length_mixed")
 
 
 def detect_latency_anomalies(cfg: LatencyDetectorConfig, df: pd.DataFrame) -> dict[str, Any]:
@@ -332,6 +450,17 @@ def detect_latency_anomalies(cfg: LatencyDetectorConfig, df: pd.DataFrame) -> di
     baseline_completion = np.nan_to_num(baseline_completion, nan=0.0)
     baseline_seconds = perf_counter() - baseline_started
 
+    system_baseline_rpm = np.nan_to_num(_rolling_mean(system_rpm, cfg.baseline_window_points, cfg.min_baseline_points), nan=0.0)
+    system_baseline_tpm = np.nan_to_num(_rolling_mean(system_tpm, cfg.baseline_window_points, cfg.min_baseline_points), nan=0.0)
+    system_baseline_prompt = np.nan_to_num(
+        _rolling_mean(system_prompt, cfg.baseline_window_points, cfg.min_baseline_points),
+        nan=0.0,
+    )
+    system_baseline_completion = np.nan_to_num(
+        _rolling_mean(system_completion, cfg.baseline_window_points, cfg.min_baseline_points),
+        nan=0.0,
+    )
+
     flags = np.zeros_like(rpm_matrix, dtype=bool)
     event_reports: list[dict[str, Any]] = []
 
@@ -344,18 +473,16 @@ def detect_latency_anomalies(cfg: LatencyDetectorConfig, df: pd.DataFrame) -> di
         tpm_excess_window = np.clip(tpm_matrix[:, a : b + 1] - baseline_tpm[:, a : b + 1], 0.0, None)
         prompt_delta_window = np.clip(prompt_matrix[:, a : b + 1] - baseline_prompt[:, a : b + 1], 0.0, None)
         completion_delta_window = np.clip(completion_matrix[:, a : b + 1] - baseline_completion[:, a : b + 1], 0.0, None)
-        prompt_load_window = prompt_delta_window * rpm_matrix[:, a : b + 1]
-        completion_load_window = completion_delta_window * rpm_matrix[:, a : b + 1]
 
         rpm_excess_sum = rpm_excess_window.sum(axis=1)
         tpm_excess_sum = tpm_excess_window.sum(axis=1)
-        prompt_load_sum = prompt_load_window.sum(axis=1)
-        completion_load_sum = completion_load_window.sum(axis=1)
+        prompt_delta_sum = prompt_delta_window.sum(axis=1)
+        completion_delta_sum = completion_delta_window.sum(axis=1)
 
         rpm_ratio = _safe_ratio(rpm_excess_sum)
         tpm_ratio = _safe_ratio(tpm_excess_sum)
-        prompt_ratio = _safe_ratio(prompt_load_sum)
-        completion_ratio = _safe_ratio(completion_load_sum)
+        prompt_ratio = _safe_ratio(prompt_delta_sum)
+        completion_ratio = _safe_ratio(completion_delta_sum)
 
         w_rpm, w_tpm, w_prompt, w_completion = weights
         scores = (
@@ -366,6 +493,21 @@ def detect_latency_anomalies(cfg: LatencyDetectorConfig, df: pd.DataFrame) -> di
         )
         score_sum = float(np.sum(scores))
         score_ratio = scores / score_sum if score_sum > 0 else np.zeros_like(scores)
+
+        rpm_shift_score = _positive_shift_score(system_rpm[a : b + 1], system_baseline_rpm[a : b + 1])
+        tpm_shift_score = _positive_shift_score(system_tpm[a : b + 1], system_baseline_tpm[a : b + 1])
+        prompt_shift_score = _positive_shift_score(system_prompt[a : b + 1], system_baseline_prompt[a : b + 1])
+        completion_shift_score = _positive_shift_score(
+            system_completion[a : b + 1],
+            system_baseline_completion[a : b + 1],
+        )
+        event_driver = _event_driver_diagnosis(
+            scope,
+            rpm_shift_score,
+            tpm_shift_score,
+            prompt_shift_score,
+            completion_shift_score,
+        )
 
         order = np.argsort(scores)[::-1]
         culprits: list[dict[str, Any]] = []
@@ -380,13 +522,21 @@ def detect_latency_anomalies(cfg: LatencyDetectorConfig, df: pd.DataFrame) -> di
             local_score = _combined_local_score(
                 rpm_excess_window[idx],
                 tpm_excess_window[idx],
-                prompt_load_window[idx],
-                completion_load_window[idx],
+                prompt_delta_window[idx],
+                completion_delta_window[idx],
                 weights,
             )
             peak_offset = int(np.argmax(local_score)) if local_score.size else 0
             peak_hour = int(a + peak_offset)
             flags[idx, peak_hour] = True
+            length_signal = _length_signal(prompt_ratio[idx], completion_ratio[idx], rpm_ratio[idx], tpm_ratio[idx])
+            driver_signal = _culprit_driver_signal(
+                scope,
+                rpm_ratio[idx],
+                tpm_ratio[idx],
+                prompt_ratio[idx],
+                completion_ratio[idx],
+            )
 
             culprits.append(
                 {
@@ -395,8 +545,10 @@ def detect_latency_anomalies(cfg: LatencyDetectorConfig, df: pd.DataFrame) -> di
                     "score_ratio": ratio,
                     "rpm_excess_ratio": float(rpm_ratio[idx]),
                     "tpm_excess_ratio": float(tpm_ratio[idx]),
-                    "prompt_load_ratio": float(prompt_ratio[idx]),
-                    "completion_load_ratio": float(completion_ratio[idx]),
+                    "prompt_delta_ratio": float(prompt_ratio[idx]),
+                    "completion_delta_ratio": float(completion_ratio[idx]),
+                    "length_signal": length_signal,
+                    "driver_signal": driver_signal,
                     "peak_hour": peak_hour,
                     "peak_rpm": float(rpm_matrix[idx, peak_hour]),
                     "peak_tpm": float(tpm_matrix[idx, peak_hour]),
@@ -424,11 +576,22 @@ def detect_latency_anomalies(cfg: LatencyDetectorConfig, df: pd.DataFrame) -> di
                 "system_peak_hour_tpot": system_peak_tpot_hour,
                 "system_peak_tpot": float(system_tpot[system_peak_tpot_hour]),
                 "culprits": culprits,
+                "driver_signal": event_driver["driver_signal"],
+                "traffic_driver_ratio": event_driver["traffic_driver_ratio"],
+                "length_driver_ratio": event_driver["length_driver_ratio"],
+                "traffic_driver_score": event_driver["traffic_driver_score"],
+                "length_driver_score": event_driver["length_driver_score"],
+                "driver_breakdown": {
+                    "rpm_shift_score": event_driver["rpm_shift_score"],
+                    "tpm_shift_score": event_driver["tpm_shift_score"],
+                    "prompt_shift_score": event_driver["prompt_shift_score"],
+                    "completion_shift_score": event_driver["completion_shift_score"],
+                },
                 "totals": {
                     "rpm_excess": float(np.sum(rpm_excess_sum)),
                     "tpm_excess": float(np.sum(tpm_excess_sum)),
-                    "prompt_load_excess": float(np.sum(prompt_load_sum)),
-                    "completion_load_excess": float(np.sum(completion_load_sum)),
+                    "prompt_delta_excess": float(np.sum(prompt_delta_sum)),
+                    "completion_delta_excess": float(np.sum(completion_delta_sum)),
                 },
             }
         )

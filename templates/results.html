@@ -116,6 +116,11 @@
                 </div>
                 <div class="small text-secondary mt-1">事件类型：<code>{{ ev.rootcause_scope }}</code></div>
                 <div class="small text-secondary mt-1">
+                  主导诱因：<code>{{ ev.driver_signal }}</code>
+                  · 流量侧={{ "%.1f"|format(ev.traffic_driver_ratio * 100) }}%
+                  · 长度侧={{ "%.1f"|format(ev.length_driver_ratio * 100) }}%
+                </div>
+                <div class="small text-secondary mt-1">
                   TTFT 峰值：{{ ev.system_peak_time_label_ttft }}（{{ "%.2f"|format(ev.system_peak_ttft) }} ms）
                 </div>
                 <div class="small text-secondary mt-1">
