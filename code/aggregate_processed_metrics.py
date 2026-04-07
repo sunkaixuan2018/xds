@@ -50,6 +50,7 @@ def parse_bucket_freq(granularity: str) -> str:
 
 def parse_time_column(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
+    print(f"[progress] parsing time column rows={len(out)}")
     s = out["collect_time_std"].astype(str).str.strip().str.replace(r"\s+", " ", regex=True)
     parsed = pd.to_datetime(s, format="%Y-%m-%d %H:%M:%S", errors="coerce")
 
@@ -94,7 +95,11 @@ def aggregate_one_sheet(df: pd.DataFrame, bucket_freq: str) -> pd.DataFrame:
 
     grouped_rows: list[dict[str, object]] = []
     group_cols = ["domain_id", "bucket_time"]
-    for (domain_id, bucket_time), g in out.groupby(group_cols, sort=True):
+    grouped = list(out.groupby(group_cols, sort=True))
+    print(f"[progress] aggregating groups total={len(grouped)} bucket={bucket_freq}")
+    for idx, ((domain_id, bucket_time), g) in enumerate(grouped, start=1):
+        if idx == 1 or idx % 500 == 0 or idx == len(grouped):
+            print(f"[progress] aggregated group {idx}/{len(grouped)} domain_id={domain_id} bucket_time={bucket_time}")
         rpm_sum = float(g["rpm"].sum())
         tpm_sum = float(g["tpm"].sum())
         grouped_rows.append(
@@ -119,9 +124,12 @@ def aggregate_one_sheet(df: pd.DataFrame, bucket_freq: str) -> pd.DataFrame:
 
 
 def load_workbook_frames(input_path: Path) -> list[tuple[str, pd.DataFrame]]:
+    print(f"[progress] opening workbook {input_path}")
     xl = pd.ExcelFile(input_path)
+    print(f"[progress] workbook sheets={len(xl.sheet_names)}")
     frames: list[tuple[str, pd.DataFrame]] = []
-    for sheet_name in xl.sheet_names:
+    for idx, sheet_name in enumerate(xl.sheet_names, start=1):
+        print(f"[progress] reading sheet {idx}/{len(xl.sheet_names)}: {sheet_name}")
         frame = pd.read_excel(input_path, sheet_name=sheet_name)
         frames.append((sheet_name, frame))
     return frames
@@ -130,8 +138,10 @@ def load_workbook_frames(input_path: Path) -> list[tuple[str, pd.DataFrame]]:
 def write_workbook(frames: list[tuple[str, pd.DataFrame]], output_path: Path) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = output_path.with_name(f"{output_path.stem}.tmp{output_path.suffix}")
+    print(f"[progress] writing workbook sheets={len(frames)} output={output_path}")
     with pd.ExcelWriter(temp_path, engine="openpyxl") as writer:
-        for sheet_name, frame in frames:
+        for idx, (sheet_name, frame) in enumerate(frames, start=1):
+            print(f"[progress] writing sheet {idx}/{len(frames)}: {sheet_name} rows={len(frame)}")
             frame.to_excel(writer, sheet_name=sheet_name, index=False)
     temp_path.replace(output_path)
     print(f"[ok] wrote {output_path}")
@@ -140,10 +150,12 @@ def write_workbook(frames: list[tuple[str, pd.DataFrame]], output_path: Path) ->
 
 def aggregate_workbook(input_path: Path, output_path: Path, granularity: str) -> Path:
     bucket_freq = parse_bucket_freq(granularity)
+    print(f"[progress] start aggregation input={input_path} output={output_path} bucket={bucket_freq}")
     source_frames = load_workbook_frames(input_path)
 
     out_frames: list[tuple[str, pd.DataFrame]] = []
-    for sheet_name, frame in source_frames:
+    for idx, (sheet_name, frame) in enumerate(source_frames, start=1):
+        print(f"[progress] processing sheet {idx}/{len(source_frames)}: {sheet_name} input_rows={len(frame)}")
         aggregated = aggregate_one_sheet(frame, bucket_freq)
         out_frames.append((sheet_name, aggregated))
         print(f"[sheet] {sheet_name} rows={len(aggregated)} granularity={bucket_freq}")

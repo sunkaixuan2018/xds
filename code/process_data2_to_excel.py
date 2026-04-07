@@ -107,9 +107,10 @@ def load_all_csv(input_dir: Path) -> pd.DataFrame:
     if not files:
         raise FileNotFoundError(f"No csv files found under: {input_dir}")
 
+    print(f"[progress] loading csv files from {input_dir} total_files={len(files)}")
     dfs: list[pd.DataFrame] = []
-    for f in files:
-        print(f"[load] {f.name}")
+    for idx, f in enumerate(files, start=1):
+        print(f"[progress] reading file {idx}/{len(files)}: {f.name}")
         df = _read_csv_flexible(f)
         df["__source_file"] = f.name
         dfs.append(df)
@@ -125,6 +126,7 @@ def parse_collect_time_std(df: pd.DataFrame) -> pd.DataFrame:
         raise ValueError("Missing required column: collect_time_std")
 
     out = df.copy()
+    print(f"[progress] parsing collect_time_std rows={len(out)}")
     s = out["collect_time_std"].astype(str).str.strip()
     s = s.str.replace(r"\s+", " ", regex=True)
 
@@ -178,7 +180,13 @@ def build_output_frames(df: pd.DataFrame) -> list[tuple[str, pd.DataFrame]]:
 
     used_sheet_names: set[str] = set()
     frames: list[tuple[str, pd.DataFrame]] = []
-    for (infer_service_id, service_name), group in out.groupby(["infer_service_id", "service_name"], sort=True):
+    grouped = list(out.groupby(["infer_service_id", "service_name"], sort=True))
+    print(f"[progress] building sheets total_groups={len(grouped)}")
+    for idx, ((infer_service_id, service_name), group) in enumerate(grouped, start=1):
+        print(
+            f"[progress] preparing sheet {idx}/{len(grouped)} "
+            f"infer_service_id={infer_service_id} service_name={service_name} rows={len(group)}"
+        )
         sheet_name = build_sheet_name(infer_service_id, service_name, used_sheet_names)
         sheet_df = group[OUTPUT_COLUMNS].copy()
         sheet_df = sheet_df.sort_values(["domain_id", "collect_time_std"]).reset_index(drop=True)
@@ -194,8 +202,10 @@ def build_output_frames(df: pd.DataFrame) -> list[tuple[str, pd.DataFrame]]:
 def write_excel(frames: list[tuple[str, pd.DataFrame]], output_path: Path) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = output_path.with_name(f"{output_path.stem}.tmp{output_path.suffix}")
+    print(f"[progress] writing workbook sheets={len(frames)} output={output_path}")
     with pd.ExcelWriter(temp_path, engine="openpyxl") as writer:
-        for sheet_name, frame in frames:
+        for idx, (sheet_name, frame) in enumerate(frames, start=1):
+            print(f"[progress] writing sheet {idx}/{len(frames)}: {sheet_name} rows={len(frame)}")
             frame.to_excel(writer, sheet_name=sheet_name, index=False)
     temp_path.replace(output_path)
     print(f"[ok] wrote {output_path}")
