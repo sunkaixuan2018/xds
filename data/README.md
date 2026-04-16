@@ -1,3 +1,10 @@
 # data
 
-存放输入数据（如各池子 CSV），供 `code/aggregate_pool_hours.py` 等脚本读取。
+该目录下的数据属于旧版本遗留样例。
+
+当前版本默认从 `data2/` 读取原始 CSV，并通过：
+
+- `code/process_data2_to_excel.py`
+- `code/aggregate_processed_metrics.py`
+
+生成可供网页上传分析的聚合 Excel。
