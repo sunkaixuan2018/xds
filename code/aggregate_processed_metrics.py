@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 from pathlib import Path
 
 import pandas as pd
@@ -32,20 +33,30 @@ NUMERIC_COLUMNS = [
 
 
 def parse_bucket_freq(granularity: str) -> str:
-    value = str(granularity).strip().lower()
+    value = str(granularity).strip().lower().replace("_", "").replace(" ", "")
     mapping = {
         "hour": "1h",
+        "hours": "1h",
+        "1hour": "1h",
+        "1hours": "1h",
         "1h": "1h",
         "h": "1h",
-        "30min": "30min",
-        "30m": "30min",
-        "half_hour": "30min",
-        "10min": "10min",
-        "10m": "10min",
+        "halfhour": "30min",
+        "minute": "1min",
+        "minutes": "1min",
+        "min": "1min",
     }
     if value in mapping:
         return mapping[value]
-    raise ValueError(f"Unsupported granularity: {granularity}")
+
+    minute_match = re.fullmatch(r"([1-9]\d*)(?:m|min|minute|minutes)", value)
+    if minute_match:
+        return f"{int(minute_match.group(1))}min"
+
+    raise ValueError(
+        f"Unsupported granularity: {granularity}. "
+        "Use 1h or a positive minute bucket such as 1min, 5min, 10min, 30min."
+    )
 
 
 def parse_time_column(df: pd.DataFrame) -> pd.DataFrame:
@@ -167,7 +178,11 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Aggregate processed metrics workbook by configurable time buckets.")
     ap.add_argument("--input", type=Path, default=DEFAULT_INPUT_PATH, help="Input xlsx path.")
     ap.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_PATH, help="Output xlsx path.")
-    ap.add_argument("--granularity", default="1h", help="Bucket size: 1h, 30min, 10min.")
+    ap.add_argument(
+        "--granularity",
+        default="1h",
+        help="Bucket size: 1h or any positive minute bucket, for example 1min, 5min, 10min, 30min.",
+    )
     args = ap.parse_args()
 
     aggregate_workbook(args.input, args.output, args.granularity)

@@ -26,6 +26,8 @@ python code/process_data2_to_excel.py
 python code/aggregate_processed_metrics.py --granularity 1h
 ```
 
+`--granularity` 支持 `1h`，也支持任意正整数分钟粒度，例如 `1min`、`5min`、`10min`、`30min`。
+
 默认输出文件：
 
 - 原始 CSV 分组结果：`result/new_data_processed.xlsx`
