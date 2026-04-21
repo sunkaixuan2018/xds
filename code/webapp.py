@@ -11,7 +11,6 @@ import uuid
 
 from datetime import datetime, timezone, timedelta
 
-from pathlib import Path
 from time import perf_counter
 
 from typing import Any
@@ -50,17 +49,39 @@ from werkzeug.utils import secure_filename
 
 
 
-from latency_detector import LatencyDetectorConfig, detect_latency_anomalies
+from config import (
+    CHART_MARGIN,
+    CHART_TEMPLATE,
+    CHART_WIDTH,
+    DEFAULT_FLASK_SECRET_KEY,
+    DEFAULT_LATENCY_CONFIG,
+    DEFAULT_MAX_EVENTS_OPTION,
+    DEFAULT_SENSITIVITY,
+    FLASK_SECRET_ENV,
+    LATENCY_SENSITIVITY_LABELS,
+    LATENCY_SENSITIVITY_RATIOS,
+    MAX_EVENTS_ALL_OPTION,
+    MAX_EVENTS_OPTIONS,
+    PLOTLY_INCLUDE_JS,
+    POOL_ALL_MARKERS,
+    POOL_ALL_SERVICE_LABEL,
+    POOL_UNNAMED_SERVICE_LABEL,
+    PROJECT_ROOT,
+    SENSITIVITY_OPTIONS,
+    SHEET_NAME_SEPARATOR,
+    SYSTEM_CHART_HEIGHT,
+    UPLOAD_DIR,
+    USER_CHART_HEIGHT,
+    WEB_DEBUG,
+    WEB_HOST,
+    WEB_PORT,
+    LatencyDetectorConfig,
+)
+from latency_detector import detect_latency_anomalies
 
 
 
 
-
-APP_DIR = Path(__file__).resolve().parent
-
-PROJECT_ROOT = APP_DIR.parent
-
-UPLOAD_DIR = PROJECT_ROOT / "_uploads"
 
 UPLOAD_DIR.mkdir(exist_ok=True)
 
@@ -69,8 +90,7 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 
 
 # Multi-sheet aggregated workbooks use `{group_key}__{service_name}`.
-POOL_SHEET_SEP = "__"
-POOL_ALL_MARKERS = frozenset({"ALL", "全部", "_ALL_"})
+POOL_SHEET_SEP = SHEET_NAME_SEPARATOR
 
 
 def parse_pool_sheet_name(sheet_name: str) -> tuple[str, str, bool]:
@@ -99,13 +119,13 @@ def build_pool_sheet_groups(sheet_names: list[str]) -> list[dict[str, Any]]:
         for sn in sorted(buckets[pool_key]):
             _, svc, is_all = parse_pool_sheet_name(sn)
             if is_all:
-                label = "全部服务"
+                label = POOL_ALL_SERVICE_LABEL
             elif svc:
                 label = svc
             else:
-                label = "未命名服务"
+                label = POOL_UNNAMED_SERVICE_LABEL
             options.append({"sheet_name": sn, "label": label})
-        options.sort(key=lambda o: (0 if o["label"] == "全部服务" else 1, o["label"]))
+        options.sort(key=lambda o: (0 if o["label"] == POOL_ALL_SERVICE_LABEL else 1, o["label"]))
         groups.append({"pool_key": pool_key, "options": options})
     return groups
 
@@ -115,28 +135,16 @@ def _pool_upload_display_name(info: dict[str, Any]) -> str:
 
 
 def _latency_config_for_sensitivity(sensitivity: str, max_events: int) -> LatencyDetectorConfig:
-    mode = (sensitivity or "balanced").strip().lower()
-    ratio_mapping = {
-        "sensitive": 1.10,
-        "balanced": 1.30,
-        "relaxed": 1.50,
-        "high": 1.10,
-        "medium": 1.30,
-        "low": 1.50,
-    }
-    return LatencyDetectorConfig(severe_ratio=float(ratio_mapping.get(mode, 1.30)), max_events=max_events)
+    mode = (sensitivity or DEFAULT_SENSITIVITY).strip().lower()
+    default_ratio = LATENCY_SENSITIVITY_RATIOS[DEFAULT_SENSITIVITY]
+    return LatencyDetectorConfig(severe_ratio=float(LATENCY_SENSITIVITY_RATIOS.get(mode, default_ratio)), max_events=max_events)
 
 
 def _latency_sensitivity_label(sensitivity: str) -> str:
-    mapping = {
-        "sensitive": "灵敏",
-        "balanced": "均衡",
-        "relaxed": "宽松",
-        "high": "灵敏",
-        "medium": "均衡",
-        "low": "宽松",
-    }
-    return mapping.get((sensitivity or "balanced").strip().lower(), "均衡")
+    return LATENCY_SENSITIVITY_LABELS.get(
+        (sensitivity or DEFAULT_SENSITIVITY).strip().lower(),
+        LATENCY_SENSITIVITY_LABELS[DEFAULT_SENSITIVITY],
+    )
 
 
 
@@ -167,7 +175,7 @@ def create_app() -> Flask:
 
     )
 
-    app.secret_key = os.environ.get("FLASK_SECRET_KEY", "local-dev-secret")
+    app.secret_key = os.environ.get(FLASK_SECRET_ENV, DEFAULT_FLASK_SECRET_KEY)
 
 
 
@@ -261,6 +269,22 @@ def create_app() -> Flask:
 
             sheet_groups=build_pool_sheet_groups(info["sheet_names"]),
 
+            sensitivity_options=SENSITIVITY_OPTIONS,
+
+            sensitivity_labels=LATENCY_SENSITIVITY_LABELS,
+
+            sensitivity_ratios=LATENCY_SENSITIVITY_RATIOS,
+
+            default_sensitivity=DEFAULT_SENSITIVITY,
+
+            max_events_options=MAX_EVENTS_OPTIONS,
+
+            max_events_all_option=MAX_EVENTS_ALL_OPTION,
+
+            default_max_events_option=DEFAULT_MAX_EVENTS_OPTION,
+
+            default_latency_config=DEFAULT_LATENCY_CONFIG,
+
         )
 
 
@@ -294,15 +318,15 @@ def create_app() -> Flask:
                 raise ValueError("当前 sheet 没有可分析数据")
 
             config_started = perf_counter()
-            sensitivity = request.form.get("sensitivity", "balanced").strip() or "balanced"
-            max_events_option = request.form.get("max_events_option", "5").strip().lower()
-            if max_events_option == "all":
+            sensitivity = request.form.get("sensitivity", DEFAULT_SENSITIVITY).strip() or DEFAULT_SENSITIVITY
+            max_events_option = request.form.get("max_events_option", DEFAULT_MAX_EVENTS_OPTION).strip().lower()
+            if max_events_option == MAX_EVENTS_ALL_OPTION:
                 max_events = 0
             else:
                 try:
                     max_events = int(max_events_option)
                 except Exception:
-                    max_events = 5
+                    max_events = int(DEFAULT_MAX_EVENTS_OPTION)
 
             cfg = _latency_config_for_sensitivity(sensitivity, max_events)
             config_seconds = perf_counter() - config_started
@@ -394,14 +418,16 @@ def create_app() -> Flask:
             np_bool(s["sys_anom_ttft"]),
             np_bool(s["sys_anom_tpot"]),
             s.get("events", []),
-            float(s["cfg"].get("ttft_sla", 25000.0)),
-            float(s["cfg"].get("tpot_sla", 45.0)),
-            float(s["cfg"].get("ttft_sla", 25000.0)) * float(s["cfg"].get("severe_ratio", 1.3)),
-            float(s["cfg"].get("tpot_sla", 45.0)) * float(s["cfg"].get("severe_ratio", 1.3)),
+            float(s["cfg"].get("ttft_sla", DEFAULT_LATENCY_CONFIG.ttft_sla)),
+            float(s["cfg"].get("tpot_sla", DEFAULT_LATENCY_CONFIG.tpot_sla)),
+            float(s["cfg"].get("ttft_sla", DEFAULT_LATENCY_CONFIG.ttft_sla))
+            * float(s["cfg"].get("severe_ratio", DEFAULT_LATENCY_CONFIG.severe_ratio)),
+            float(s["cfg"].get("tpot_sla", DEFAULT_LATENCY_CONFIG.tpot_sla))
+            * float(s["cfg"].get("severe_ratio", DEFAULT_LATENCY_CONFIG.severe_ratio)),
         )
         system_figure_seconds = perf_counter() - figure_build_started
         figure_html_started = perf_counter()
-        system_fig_html = pio.to_html(system_fig, full_html=False, include_plotlyjs="inline")
+        system_fig_html = pio.to_html(system_fig, full_html=False, include_plotlyjs=PLOTLY_INCLUDE_JS)
         figure_html_seconds = perf_counter() - figure_html_started
 
         user_summary_started = perf_counter()
@@ -488,7 +514,7 @@ def create_app() -> Flask:
             event_reports=event_reports_view,
             all_users=all_users,
             system_fig_html=system_fig_html,
-            sensitivity_mode_label=s.get("sensitivity_mode_label", "均衡"),
+            sensitivity_mode_label=s.get("sensitivity_mode_label", LATENCY_SENSITIVITY_LABELS[DEFAULT_SENSITIVITY]),
             time_step_minutes=int(s.get("time_step_minutes", 60)),
             file_load_seconds=float(s.get("file_load_seconds", 0.0)),
             detect_seconds=float(s.get("detect_seconds", 0.0)),
@@ -542,12 +568,14 @@ def create_app() -> Flask:
             np_array(s["completion_tokens"])[idx],
             np_bool_matrix(s["flags"])[idx],
             s.get("events", []),
-            float(s["cfg"].get("ttft_sla", 25000.0)),
-            float(s["cfg"].get("tpot_sla", 45.0)),
-            float(s["cfg"].get("ttft_sla", 25000.0)) * float(s["cfg"].get("severe_ratio", 1.3)),
-            float(s["cfg"].get("tpot_sla", 45.0)) * float(s["cfg"].get("severe_ratio", 1.3)),
+            float(s["cfg"].get("ttft_sla", DEFAULT_LATENCY_CONFIG.ttft_sla)),
+            float(s["cfg"].get("tpot_sla", DEFAULT_LATENCY_CONFIG.tpot_sla)),
+            float(s["cfg"].get("ttft_sla", DEFAULT_LATENCY_CONFIG.ttft_sla))
+            * float(s["cfg"].get("severe_ratio", DEFAULT_LATENCY_CONFIG.severe_ratio)),
+            float(s["cfg"].get("tpot_sla", DEFAULT_LATENCY_CONFIG.tpot_sla))
+            * float(s["cfg"].get("severe_ratio", DEFAULT_LATENCY_CONFIG.severe_ratio)),
         )
-        user_fig_html = pio.to_html(user_fig, full_html=False, include_plotlyjs="inline")
+        user_fig_html = pio.to_html(user_fig, full_html=False, include_plotlyjs=PLOTLY_INCLUDE_JS)
 
         system_fig = build_latency_system_figure(
             t,
@@ -558,12 +586,14 @@ def create_app() -> Flask:
             np_bool(s["sys_anom_ttft"]),
             np_bool(s["sys_anom_tpot"]),
             s.get("events", []),
-            float(s["cfg"].get("ttft_sla", 25000.0)),
-            float(s["cfg"].get("tpot_sla", 45.0)),
-            float(s["cfg"].get("ttft_sla", 25000.0)) * float(s["cfg"].get("severe_ratio", 1.3)),
-            float(s["cfg"].get("tpot_sla", 45.0)) * float(s["cfg"].get("severe_ratio", 1.3)),
+            float(s["cfg"].get("ttft_sla", DEFAULT_LATENCY_CONFIG.ttft_sla)),
+            float(s["cfg"].get("tpot_sla", DEFAULT_LATENCY_CONFIG.tpot_sla)),
+            float(s["cfg"].get("ttft_sla", DEFAULT_LATENCY_CONFIG.ttft_sla))
+            * float(s["cfg"].get("severe_ratio", DEFAULT_LATENCY_CONFIG.severe_ratio)),
+            float(s["cfg"].get("tpot_sla", DEFAULT_LATENCY_CONFIG.tpot_sla))
+            * float(s["cfg"].get("severe_ratio", DEFAULT_LATENCY_CONFIG.severe_ratio)),
         )
-        system_fig_html = pio.to_html(system_fig, full_html=False, include_plotlyjs="inline")
+        system_fig_html = pio.to_html(system_fig, full_html=False, include_plotlyjs=PLOTLY_INCLUDE_JS)
 
         row = next((r for r in s["records_json"] if r["user_id"] == user_id), None)
         if row is None:
@@ -751,12 +781,6 @@ def _format_latency_event_reports_with_time(event_reports: list[dict[str, Any]],
 
 
 
-# Keep chart sizing consistent across results, event, and user pages.
-
-_CHART_WIDTH = 980
-
-_CHART_MARGIN = dict(l=52, r=32, t=60, b=44)
-
 def build_latency_system_figure(
     t: list[datetime],
     system_ttft: Any,
@@ -868,10 +892,10 @@ def build_latency_system_figure(
     fig.update_xaxes(title_text="时间", row=2, col=1)
     fig.update_layout(
         title="系统延迟与流量趋势",
-        template="plotly_white",
-        width=_CHART_WIDTH,
-        height=680,
-        margin=_CHART_MARGIN,
+        template=CHART_TEMPLATE,
+        width=CHART_WIDTH,
+        height=SYSTEM_CHART_HEIGHT,
+        margin=CHART_MARGIN,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
     )
     return fig
@@ -990,10 +1014,10 @@ def build_latency_user_figure(
     fig.update_xaxes(title_text="时间", row=3, col=1)
     fig.update_layout(
         title="用户延迟、流量与 Token 趋势",
-        template="plotly_white",
-        width=_CHART_WIDTH,
-        height=860,
-        margin=_CHART_MARGIN,
+        template=CHART_TEMPLATE,
+        width=CHART_WIDTH,
+        height=USER_CHART_HEIGHT,
+        margin=CHART_MARGIN,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
     )
     return fig
@@ -1006,7 +1030,7 @@ if __name__ == "__main__":
 
     app = create_app()
 
-    app.run(host="127.0.0.1", port=5000, debug=True)
+    app.run(host=WEB_HOST, port=WEB_PORT, debug=WEB_DEBUG)
 
 
 

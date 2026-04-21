@@ -1,19 +1,15 @@
 from __future__ import annotations
 
-import os
 from datetime import datetime, timedelta
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-
-BASE_DIR = Path(__file__).resolve().parents[1]
-DATA2_DIR = BASE_DIR / "data2"
+from config import FAKE_DATA_SCENARIOS, FAKE_DATA_SEED_BASE, FAKE_DATA_START, RAW_DATA_DIR
 
 
 def ensure_dirs() -> None:
-    DATA2_DIR.mkdir(exist_ok=True)
+    RAW_DATA_DIR.mkdir(exist_ok=True)
 
 
 def build_time_range(start: datetime, hours: int) -> list[datetime]:
@@ -32,7 +28,7 @@ def format_collect_time(t: datetime, mode: int) -> str:
 
 def make_fake_csv(file_idx: int, start: datetime, hours: int, infer_service_id: str, service_name: str, pool_id: str) -> None:
     times = build_time_range(start, hours)
-    rng = np.random.default_rng(20260402 + file_idx)
+    rng = np.random.default_rng(FAKE_DATA_SEED_BASE + file_idx)
     rows: list[dict[str, object]] = []
 
     domains = [
@@ -116,7 +112,7 @@ def make_fake_csv(file_idx: int, start: datetime, hours: int, infer_service_id: 
             rows.append(row)
 
     df = pd.DataFrame(rows)
-    out_path = DATA2_DIR / f"fake_data2_{file_idx}.csv"
+    out_path = RAW_DATA_DIR / f"fake_data2_{file_idx}.csv"
     df.to_csv(out_path, index=False, encoding="utf-8-sig")
     print(f"[ok] wrote {out_path} rows={len(df)}")
 
@@ -124,33 +120,15 @@ def make_fake_csv(file_idx: int, start: datetime, hours: int, infer_service_id: 
 def main() -> None:
     ensure_dirs()
 
-    start = datetime(2026, 3, 14, 4, 0, 0)
-    hours = 10
-
-    make_fake_csv(
-        file_idx=1,
-        start=start,
-        hours=hours,
-        infer_service_id="svc-inference-main-cluster-east-long-name",
-        service_name="DeepSeek-R1-Reasoning-Service-Ultra-Long-Name",
-        pool_id="pool-A",
-    )
-    make_fake_csv(
-        file_idx=2,
-        start=start + timedelta(hours=1),
-        hours=9,
-        infer_service_id="svc-inference-main-cluster-east-long-name",
-        service_name="DeepSeek-V3-Chat-Service-Ultra-Long-Name",
-        pool_id="pool-A",
-    )
-    make_fake_csv(
-        file_idx=3,
-        start=start,
-        hours=8,
-        infer_service_id="svc-vision-prod",
-        service_name="Vision-Pro-Max",
-        pool_id="pool-B",
-    )
+    for scenario in FAKE_DATA_SCENARIOS:
+        make_fake_csv(
+            file_idx=int(scenario["file_idx"]),
+            start=FAKE_DATA_START + timedelta(hours=int(scenario["start_offset_hours"])),
+            hours=int(scenario["hours"]),
+            infer_service_id=str(scenario["infer_service_id"]),
+            service_name=str(scenario["service_name"]),
+            pool_id=str(scenario["pool_id"]),
+        )
 
 
 if __name__ == "__main__":

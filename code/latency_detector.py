@@ -1,26 +1,20 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from time import perf_counter
 from typing import Any
 
 import numpy as np
 import pandas as pd
 
-
-@dataclass(frozen=True)
-class LatencyDetectorConfig:
-    ttft_sla: float = 25000.0
-    tpot_sla: float = 45.0
-    severe_ratio: float = 1.3
-    mild_consecutive_windows: int = 2
-    event_merge_gap: int = 0
-    max_events: int = 5
-    baseline_window_points: int = 24
-    min_baseline_points: int = 6
-    culprit_top_k: int = 3
-    culprit_cum_ratio: float = 0.8
-    culprit_min_ratio: float = 0.05
+from config import (
+    DOMINANCE_RATIO,
+    EPSILON,
+    LENGTH_SIGNAL_JOINT_MIN_RATIO,
+    LENGTH_SIGNAL_MIN_RATIO,
+    SCORE_WEIGHTS_BY_SCOPE,
+    LatencyDetectorConfig,
+)
 
 
 REQUIRED_COLUMNS = [
@@ -179,8 +173,8 @@ def _cap_events(
     scored: list[tuple[tuple[int, int], float]] = []
     for window in events:
         a, b = window
-        ttft_ratio = float(np.nanmax(system_ttft[a : b + 1] / max(cfg.ttft_sla, 1e-9)))
-        tpot_ratio = float(np.nanmax(system_tpot[a : b + 1] / max(cfg.tpot_sla, 1e-9)))
+        ttft_ratio = float(np.nanmax(system_ttft[a : b + 1] / max(cfg.ttft_sla, EPSILON)))
+        tpot_ratio = float(np.nanmax(system_tpot[a : b + 1] / max(cfg.tpot_sla, EPSILON)))
         scored.append((window, max(ttft_ratio, tpot_ratio)))
     scored.sort(key=lambda item: item[1], reverse=True)
     return [window for window, _ in scored[:max_events]]
@@ -202,11 +196,7 @@ def _scope_for_window(
 
 
 def _score_weights(scope: str) -> tuple[float, float, float, float]:
-    if scope == "ttft_only":
-        return (0.35, 0.15, 0.40, 0.10)
-    if scope == "tpot_only":
-        return (0.10, 0.25, 0.15, 0.50)
-    return (0.225, 0.20, 0.275, 0.30)
+    return SCORE_WEIGHTS_BY_SCOPE.get(scope, SCORE_WEIGHTS_BY_SCOPE["both"])
 
 
 def _safe_ratio(values: np.ndarray) -> np.ndarray:
@@ -248,11 +238,15 @@ def _length_signal(prompt_ratio: float, completion_ratio: float, rpm_ratio: floa
     traffic_ratio = float(max(rpm_ratio, tpm_ratio))
     if prompt_ratio <= 0 and completion_ratio <= 0:
         return "traffic_dominant"
-    if prompt_ratio >= 0.15 and completion_ratio >= 0.15 and (prompt_ratio + completion_ratio) >= max(traffic_ratio, 0.30):
+    if (
+        prompt_ratio >= LENGTH_SIGNAL_MIN_RATIO
+        and completion_ratio >= LENGTH_SIGNAL_MIN_RATIO
+        and (prompt_ratio + completion_ratio) >= max(traffic_ratio, LENGTH_SIGNAL_JOINT_MIN_RATIO)
+    ):
         return "io_shift_joint"
-    if prompt_ratio >= max(completion_ratio * 1.2, traffic_ratio):
+    if prompt_ratio >= max(completion_ratio * DOMINANCE_RATIO, traffic_ratio):
         return "input_shift_dominant"
-    if completion_ratio >= max(prompt_ratio * 1.2, traffic_ratio):
+    if completion_ratio >= max(prompt_ratio * DOMINANCE_RATIO, traffic_ratio):
         return "output_shift_dominant"
     if max(prompt_ratio, completion_ratio) >= traffic_ratio:
         return "length_shift_mixed"
@@ -271,7 +265,7 @@ def _positive_shift_score(values: np.ndarray, baseline: np.ndarray) -> float:
     if delta_sum <= 0:
         return 0.0
     baseline_sum = float(np.sum(baseline_abs[valid]))
-    return float(delta_sum / (baseline_sum + delta_sum + 1e-9))
+    return float(delta_sum / (baseline_sum + delta_sum + EPSILON))
 
 
 def _dominance_label(primary_score: float, secondary_score: float, primary_label: str, secondary_label: str, mixed_label: str) -> str:
@@ -279,9 +273,9 @@ def _dominance_label(primary_score: float, secondary_score: float, primary_label
     secondary_score = float(secondary_score)
     if primary_score <= 0 and secondary_score <= 0:
         return "unclear"
-    if primary_score >= secondary_score * 1.2:
+    if primary_score >= secondary_score * DOMINANCE_RATIO:
         return primary_label
-    if secondary_score >= primary_score * 1.2:
+    if secondary_score >= primary_score * DOMINANCE_RATIO:
         return secondary_label
     return mixed_label
 

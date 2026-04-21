@@ -9,10 +9,17 @@ from pathlib import Path
 
 import pandas as pd
 
-
-BASE_DIR = Path(__file__).resolve().parents[1]
-DEFAULT_INPUT_DIR = BASE_DIR / "data2"
-DEFAULT_OUTPUT_PATH = BASE_DIR / "result" / "new_data_processed.xlsx"
+from config import (
+    AUTO_WORKER_CPU_EXTRA,
+    AUTO_WORKER_MAX,
+    EXCEL_SHEET_MAX_LEN,
+    PROCESSED_WORKBOOK_PATH,
+    RAW_DATA_DIR,
+    SHEET_NAME_FALLBACK_LEFT_BUDGET,
+    SHEET_NAME_LEFT_BUDGET,
+    SHEET_NAME_MIN_RIGHT_BUDGET,
+    SHEET_NAME_SEPARATOR,
+)
 
 REQUIRED_COLUMNS = [
     "infer_service_id",
@@ -52,15 +59,14 @@ def resolve_workers(workers: int, task_count: int) -> int:
     if task_count <= 1:
         return 1
     if workers < 1:
-        return min(task_count, 32, (os.cpu_count() or 1) + 4)
+        return min(task_count, AUTO_WORKER_MAX, (os.cpu_count() or 1) + AUTO_WORKER_CPU_EXTRA)
     return min(task_count, workers)
 
 
 _INVALID_SHEET_CHARS = re.compile(r"[\[\]\:\*\?\/\\]")
-EXCEL_SHEET_MAX = 31
 
 
-def sanitize_excel_sheet_name(name: str, max_len: int = EXCEL_SHEET_MAX) -> str:
+def sanitize_excel_sheet_name(name: str, max_len: int = EXCEL_SHEET_MAX_LEN) -> str:
     s = _INVALID_SHEET_CHARS.sub("_", str(name).strip())
     s = s.strip("'") or "sheet"
     if max_len < 1:
@@ -69,18 +75,18 @@ def sanitize_excel_sheet_name(name: str, max_len: int = EXCEL_SHEET_MAX) -> str:
 
 
 def build_sheet_name(infer_service_id: str, service_name: str, used: set[str]) -> str:
-    sep = "__"
+    sep = SHEET_NAME_SEPARATOR
     sep_len = len(sep)
 
     def readable_name() -> str:
-        left_budget = 14
-        right_budget = EXCEL_SHEET_MAX - sep_len - left_budget
-        if right_budget < 6:
-            left_budget = 10
-            right_budget = EXCEL_SHEET_MAX - sep_len - left_budget
+        left_budget = SHEET_NAME_LEFT_BUDGET
+        right_budget = EXCEL_SHEET_MAX_LEN - sep_len - left_budget
+        if right_budget < SHEET_NAME_MIN_RIGHT_BUDGET:
+            left_budget = SHEET_NAME_FALLBACK_LEFT_BUDGET
+            right_budget = EXCEL_SHEET_MAX_LEN - sep_len - left_budget
         left = sanitize_excel_sheet_name(infer_service_id, left_budget)
         right = sanitize_excel_sheet_name(service_name, right_budget)
-        return sanitize_excel_sheet_name(f"{left}{sep}{right}", EXCEL_SHEET_MAX)
+        return sanitize_excel_sheet_name(f"{left}{sep}{right}", EXCEL_SHEET_MAX_LEN)
 
     name = readable_name()
     if name not in used:
@@ -95,7 +101,7 @@ def build_sheet_name(infer_service_id: str, service_name: str, used: set[str]) -
 
     for i in range(2, 10000):
         suffix = f"_{i}"
-        candidate = sanitize_excel_sheet_name(name[: EXCEL_SHEET_MAX - len(suffix)] + suffix, EXCEL_SHEET_MAX)
+        candidate = sanitize_excel_sheet_name(name[: EXCEL_SHEET_MAX_LEN - len(suffix)] + suffix, EXCEL_SHEET_MAX_LEN)
         if candidate not in used:
             used.add(candidate)
             return candidate
@@ -283,8 +289,8 @@ def write_excel(frames: list[tuple[str, pd.DataFrame]], output_path: Path) -> Pa
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Filter data2 csv files and write grouped excel sheets.")
-    ap.add_argument("--input-dir", type=Path, default=DEFAULT_INPUT_DIR, help="Directory containing source csv files.")
-    ap.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_PATH, help="Output xlsx path.")
+    ap.add_argument("--input-dir", type=Path, default=RAW_DATA_DIR, help="Directory containing source csv files.")
+    ap.add_argument("--output", type=Path, default=PROCESSED_WORKBOOK_PATH, help="Output xlsx path.")
     ap.add_argument("--workers", type=int, default=0, help="Thread workers. Use 0 for auto, 1 to disable threading.")
     args = ap.parse_args()
 

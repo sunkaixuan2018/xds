@@ -57,6 +57,8 @@ python code/webapp.py
 
 - `http://127.0.0.1:5000`
 
+常用运行参数集中在 `code/config.py`，包括检测阈值、灵敏度倍率、事件窗口、聚合 checkpoint、默认输入输出路径和 Web 监听端口等。
+
 ## 4. 网页使用流程
 
 1. 上传聚合后的 Excel 文件
@@ -99,4 +101,4 @@ python code/webapp.py
 - `code/webapp.py`：Web 入口
 - `code/latency_detector.py`：延迟异常检测与根因定位
 - `code/process_data2_to_excel.py`：把 `data2/*.csv` 汇总为多 sheet Excel
-- `code/aggregate_processed_metrics.py`：按 `1h / 30min / 10min` 聚合
+- `code/aggregate_processed_metrics.py`：按 `1h` 或任意正整数分钟粒度聚合

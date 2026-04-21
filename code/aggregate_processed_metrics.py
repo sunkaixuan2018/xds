@@ -8,10 +8,16 @@ from pathlib import Path
 
 import pandas as pd
 
-
-BASE_DIR = Path(__file__).resolve().parents[1]
-DEFAULT_INPUT_PATH = BASE_DIR / "result" / "new_data_processed.xlsx"
-DEFAULT_OUTPUT_PATH = BASE_DIR / "result" / "new_data_aggregated.xlsx"
+from config import (
+    AGGREGATE_CHECKPOINT_SHEETS,
+    AGGREGATE_MIN_GROUPS_FOR_PROGRESS,
+    AGGREGATE_PROGRESS_STEPS,
+    AGGREGATED_WORKBOOK_PATH,
+    AUTO_WORKER_CPU_EXTRA,
+    AUTO_WORKER_MAX,
+    DEFAULT_AGGREGATION_GRANULARITY,
+    PROCESSED_WORKBOOK_PATH,
+)
 
 OUTPUT_COLUMNS = [
     "domain_id",
@@ -33,16 +39,11 @@ NUMERIC_COLUMNS = [
     "completion_tokens",
 ]
 
-MIN_GROUPS_FOR_PROGRESS = 1000
-PROGRESS_STEPS = 10
-CHECKPOINT_SHEETS = 10
-
-
 def resolve_workers(workers: int, task_count: int) -> int:
     if task_count <= 1:
         return 1
     if workers < 1:
-        return min(task_count, 32, (os.cpu_count() or 1) + 4)
+        return min(task_count, AUTO_WORKER_MAX, (os.cpu_count() or 1) + AUTO_WORKER_CPU_EXTRA)
     return min(task_count, workers)
 
 
@@ -123,8 +124,8 @@ def aggregate_one_sheet(df: pd.DataFrame, bucket_freq: str, progress_label: str 
     total_groups = len(grouped)
     label = f" {progress_label}" if progress_label else ""
     print(f"[progress] sheet{label} groups={total_groups} bucket={bucket_freq}")
-    show_group_progress = total_groups >= MIN_GROUPS_FOR_PROGRESS
-    progress_interval = max(1, total_groups // PROGRESS_STEPS) if show_group_progress else 0
+    show_group_progress = total_groups >= AGGREGATE_MIN_GROUPS_FOR_PROGRESS
+    progress_interval = max(1, total_groups // AGGREGATE_PROGRESS_STEPS) if show_group_progress else 0
     for idx, ((domain_id, bucket_time), g) in enumerate(grouped, start=1):
         if show_group_progress and (idx % progress_interval == 0 or idx == total_groups):
             percent = int(idx * 100 / total_groups)
@@ -257,9 +258,9 @@ def aggregate_workbook(input_path: Path, output_path: Path, granularity: str, wo
         temp_path.unlink()
 
     sheets_written = 0
-    print(f"[progress] writing checkpoints every {CHECKPOINT_SHEETS} sheets")
+    print(f"[progress] writing checkpoints every {AGGREGATE_CHECKPOINT_SHEETS} sheets")
     with pd.ExcelWriter(temp_path, engine="openpyxl") as writer:
-        for total_sheets, source_frames in iter_workbook_batches(input_path, CHECKPOINT_SHEETS):
+        for total_sheets, source_frames in iter_workbook_batches(input_path, AGGREGATE_CHECKPOINT_SHEETS):
             out_frames = aggregate_frames(source_frames, total_sheets, bucket_freq, workers)
             sheets_written = write_sheet_batch(writer, out_frames, total_sheets, temp_path, sheets_written)
 
@@ -270,11 +271,11 @@ def aggregate_workbook(input_path: Path, output_path: Path, granularity: str, wo
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Aggregate processed metrics workbook by configurable time buckets.")
-    ap.add_argument("--input", type=Path, default=DEFAULT_INPUT_PATH, help="Input xlsx path.")
-    ap.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_PATH, help="Output xlsx path.")
+    ap.add_argument("--input", type=Path, default=PROCESSED_WORKBOOK_PATH, help="Input xlsx path.")
+    ap.add_argument("--output", type=Path, default=AGGREGATED_WORKBOOK_PATH, help="Output xlsx path.")
     ap.add_argument(
         "--granularity",
-        default="1h",
+        default=DEFAULT_AGGREGATION_GRANULARITY,
         help="Bucket size: 1h or any positive minute bucket, for example 1min, 5min, 10min, 30min.",
     )
     ap.add_argument("--workers", type=int, default=0, help="Thread workers. Use 0 for auto, 1 to disable threading.")
