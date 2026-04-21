@@ -70,6 +70,8 @@ from config import (
     SENSITIVITY_OPTIONS,
     SHEET_NAME_SEPARATOR,
     SYSTEM_CHART_HEIGHT,
+    TIMING_PIE_HEIGHT,
+    TIMING_PIE_TOP_N,
     UPLOAD_DIR,
     USER_CHART_HEIGHT,
     WEB_DEBUG,
@@ -157,8 +159,36 @@ def _format_seconds(value: Any) -> str:
         return str(value)
 
 
-def _timing_item(label: str, value: Any) -> dict[str, str]:
-    return {"label": label, "seconds": _format_seconds(value)}
+def _timing_seconds(value: Any) -> float:
+    try:
+        v = float(value)
+    except Exception:
+        return 0.0
+    if not np.isfinite(v) or v < 0:
+        return 0.0
+    return v
+
+
+def _timing_breakdown(items: list[tuple[str, Any]], top_n: int = TIMING_PIE_TOP_N) -> tuple[list[dict[str, Any]], float]:
+    rows = [
+        {"label": label, "seconds_value": _timing_seconds(value)}
+        for label, value in items
+    ]
+    rows = [row for row in rows if row["seconds_value"] > 0]
+    rows.sort(key=lambda row: row["seconds_value"], reverse=True)
+
+    if top_n > 0 and len(rows) > top_n:
+        major = rows[:top_n]
+        other_seconds = sum(row["seconds_value"] for row in rows[top_n:])
+        if other_seconds > 0:
+            major.append({"label": "其他", "seconds_value": other_seconds})
+        rows = major
+
+    total = sum(row["seconds_value"] for row in rows)
+    for row in rows:
+        row["seconds"] = _format_seconds(row["seconds_value"])
+        row["percent"] = (row["seconds_value"] / total * 100.0) if total > 0 else 0.0
+    return rows, total
 
 
 def create_app() -> Flask:
@@ -404,7 +434,6 @@ def create_app() -> Flask:
             return redirect(url_for("index"))
 
 
-        results_request_started = perf_counter()
         restore_started = perf_counter()
         t = [datetime.fromisoformat(x) for x in s["t"]]
         time_restore_seconds = perf_counter() - restore_started
@@ -427,7 +456,7 @@ def create_app() -> Flask:
         )
         system_figure_seconds = perf_counter() - figure_build_started
         figure_html_started = perf_counter()
-        system_fig_html = pio.to_html(system_fig, full_html=False, include_plotlyjs=PLOTLY_INCLUDE_JS)
+        system_fig_html = pio.to_html(system_fig, full_html=False, include_plotlyjs=False)
         figure_html_seconds = perf_counter() - figure_html_started
 
         user_summary_started = perf_counter()
@@ -464,43 +493,37 @@ def create_app() -> Flask:
         event_format_seconds = perf_counter() - event_format_started
 
         analysis_timings = s.get("analysis_timings", {})
-        analysis_timing_items = [
-            _timing_item("Analyze Total", analysis_timings.get("analysis_total_seconds", 0.0)),
-            _timing_item("File Load", analysis_timings.get("file_load_seconds", s.get("file_load_seconds", 0.0))),
-            _timing_item("Config Build", analysis_timings.get("config_seconds", 0.0)),
-            _timing_item("Detection", analysis_timings.get("detect_seconds", s.get("detect_seconds", 0.0))),
-            _timing_item("Session Build", analysis_timings.get("session_build_seconds", 0.0)),
-        ]
         detection_timings = s.get("detection_timings", {})
-        detection_timing_items = [
-            _timing_item("Detection Total", detection_timings.get("detection_total_seconds", 0.0)),
-            _timing_item("Input Prepare", detection_timings.get("prepare_input_seconds", 0.0)),
-            _timing_item("Deduplicate", detection_timings.get("dedupe_seconds", 0.0)),
-            _timing_item("Time Index", detection_timings.get("time_index_seconds", 0.0)),
-            _timing_item("Matrix Build", detection_timings.get("matrix_build_seconds", 0.0)),
-            _timing_item("System Series", detection_timings.get("system_series_seconds", 0.0)),
-            _timing_item("Event Detect", detection_timings.get("event_detection_seconds", 0.0)),
-            _timing_item("Baseline", detection_timings.get("baseline_seconds", 0.0)),
-            _timing_item("Root Cause", detection_timings.get("rootcause_seconds", 0.0)),
-            _timing_item("Records", detection_timings.get("records_seconds", 0.0)),
-            _timing_item("Stats", detection_timings.get("stats_seconds", 0.0)),
+        detection_timing_sources = [
+            ("数据校验", detection_timings.get("prepare_input_seconds", 0.0)),
+            ("去重排序", detection_timings.get("dedupe_seconds", 0.0)),
+            ("时间索引", detection_timings.get("time_index_seconds", 0.0)),
+            ("矩阵构建", detection_timings.get("matrix_build_seconds", 0.0)),
+            ("系统序列", detection_timings.get("system_series_seconds", 0.0)),
+            ("事件检测", detection_timings.get("event_detection_seconds", 0.0)),
+            ("基线计算", detection_timings.get("baseline_seconds", 0.0)),
+            ("根因定位", detection_timings.get("rootcause_seconds", 0.0)),
+            ("结果记录", detection_timings.get("records_seconds", 0.0)),
+            ("统计汇总", detection_timings.get("stats_seconds", 0.0)),
         ]
-        results_pre_render_seconds = perf_counter() - results_request_started
-        template_render_marker = "__RESULTS_TEMPLATE_RENDER_SECONDS__"
-        results_total_marker = "__RESULTS_TOTAL_SECONDS__"
-        end_to_end_marker = "__END_TO_END_SECONDS__"
-        results_timing_items = [
-            _timing_item("Time Restore", time_restore_seconds),
-            _timing_item("Figure Build", system_figure_seconds),
-            _timing_item("Figure HTML", figure_html_seconds),
-            _timing_item("User Summary", user_summary_seconds),
-            _timing_item("Event Format", event_format_seconds),
-            _timing_item("Pre-Render", results_pre_render_seconds),
-            _timing_item("Template Render", template_render_marker),
-            _timing_item("Results Total", results_total_marker),
-            _timing_item("End-to-End", end_to_end_marker),
+        if not any(_timing_seconds(value) > 0 for _, value in detection_timing_sources):
+            detection_timing_sources = [
+                ("异常检测", analysis_timings.get("detect_seconds", s.get("detect_seconds", 0.0)))
+            ]
+        timing_sources = [
+            ("文件加载", analysis_timings.get("file_load_seconds", s.get("file_load_seconds", 0.0))),
+            ("参数配置", analysis_timings.get("config_seconds", 0.0)),
+            *detection_timing_sources,
+            ("结果缓存", analysis_timings.get("session_build_seconds", 0.0)),
+            ("时间恢复", time_restore_seconds),
+            ("系统图构建", system_figure_seconds),
+            ("图表 HTML 生成", figure_html_seconds),
+            ("用户汇总", user_summary_seconds),
+            ("事件格式化", event_format_seconds),
         ]
-        render_started = perf_counter()
+        timing_items, timing_total_seconds = _timing_breakdown(timing_sources)
+        timing_fig = build_timing_pie_figure(timing_items)
+        timing_fig_html = pio.to_html(timing_fig, full_html=False, include_plotlyjs=PLOTLY_INCLUDE_JS)
 
         rendered = render_template(
             "results.html",
@@ -514,20 +537,12 @@ def create_app() -> Flask:
             event_reports=event_reports_view,
             all_users=all_users,
             system_fig_html=system_fig_html,
+            timing_fig_html=timing_fig_html,
+            timing_items=timing_items,
+            timing_total_seconds=timing_total_seconds,
             sensitivity_mode_label=s.get("sensitivity_mode_label", LATENCY_SENSITIVITY_LABELS[DEFAULT_SENSITIVITY]),
             time_step_minutes=int(s.get("time_step_minutes", 60)),
-            file_load_seconds=float(s.get("file_load_seconds", 0.0)),
-            detect_seconds=float(s.get("detect_seconds", 0.0)),
-            analysis_timing_items=analysis_timing_items,
-            detection_timing_items=detection_timing_items,
-            results_timing_items=results_timing_items,
         )
-        template_render_seconds = perf_counter() - render_started
-        results_total_seconds = perf_counter() - results_request_started
-        end_to_end_seconds = float(analysis_timings.get("analysis_total_seconds", 0.0)) + results_total_seconds
-        rendered = rendered.replace(template_render_marker, _format_seconds(template_render_seconds), 1)
-        rendered = rendered.replace(results_total_marker, _format_seconds(results_total_seconds), 1)
-        rendered = rendered.replace(end_to_end_marker, _format_seconds(end_to_end_seconds), 1)
         return rendered
 
 
@@ -778,7 +793,27 @@ def _format_latency_event_reports_with_time(event_reports: list[dict[str, Any]],
     return out
 
 
-
+def build_timing_pie_figure(timing_items: list[dict[str, Any]]) -> go.Figure:
+    fig = go.Figure(
+        data=[
+            go.Pie(
+                labels=[item["label"] for item in timing_items],
+                values=[item["seconds_value"] for item in timing_items],
+                hole=0.42,
+                sort=False,
+                textinfo="percent",
+                textposition="inside",
+                marker=dict(line=dict(color="#ffffff", width=2)),
+            )
+        ]
+    )
+    fig.update_layout(
+        template=CHART_TEMPLATE,
+        height=TIMING_PIE_HEIGHT,
+        margin=dict(l=8, r=8, t=12, b=8),
+        showlegend=False,
+    )
+    return fig
 
 
 def build_latency_system_figure(

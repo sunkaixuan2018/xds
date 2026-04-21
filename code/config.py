@@ -128,6 +128,12 @@ SYSTEM_CHART_HEIGHT = 680
 # 单用户详情图高度。
 USER_CHART_HEIGHT = 860
 
+# 耗时饼图高度。
+TIMING_PIE_HEIGHT = 320
+
+# 耗时分析最多展示的主要阶段数量，剩余阶段合并为“其他”。
+TIMING_PIE_TOP_N = 6
+
 # 判断除数接近 0 时使用的小量。
 EPSILON = 1e-9
 

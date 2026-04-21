@@ -21,36 +21,39 @@
 
   <div class="card shadow-sm mb-3">
     <div class="card-body py-3">
-      <div class="row g-3 small mb-3">
-        <div class="col-lg-6">
-          <div class="fw-semibold mb-2">Analyze POST</div>
-          <div class="d-flex flex-wrap gap-3 text-secondary">
-            {% for item in analysis_timing_items %}
-              <div>{{ item.label }}: <code>{{ item.seconds }} s</code></div>
-            {% endfor %}
+      <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-2">
+        <div>
+          <h6 class="mb-1">运行耗时分析</h6>
+          <div class="small text-secondary">
+            主要阶段合计：<code>{{ "%.3f"|format(timing_total_seconds) }} s</code>
           </div>
         </div>
-        <div class="col-lg-6">
-          <div class="fw-semibold mb-2">Results GET</div>
-          <div class="d-flex flex-wrap gap-3 text-secondary">
-            {% for item in results_timing_items %}
-              <div>{{ item.label }}: <code>{{ item.seconds }} s</code></div>
-            {% endfor %}
+        <div class="small text-secondary">按耗时排序，低耗时阶段合并为“其他”。</div>
+      </div>
+      {% if timing_items and timing_items|length > 0 %}
+        <div class="row g-3 align-items-center">
+          <div class="col-lg-6">
+            <div class="plotly-chart timing-chart">
+              {{ timing_fig_html|safe }}
+            </div>
+          </div>
+          <div class="col-lg-6">
+            <div class="list-group list-group-flush small">
+              {% for item in timing_items %}
+                <div class="list-group-item px-0 d-flex justify-content-between align-items-start gap-3">
+                  <div>
+                    <div class="fw-semibold">{{ loop.index }}. {{ item.label }}</div>
+                    <div class="text-secondary">{{ "%.1f"|format(item.percent) }}%</div>
+                  </div>
+                  <code>{{ item.seconds }} s</code>
+                </div>
+              {% endfor %}
+            </div>
           </div>
         </div>
-      </div>
-      <div class="small mb-3">
-        <div class="fw-semibold mb-2">Detection Breakdown</div>
-        <div class="d-flex flex-wrap gap-3 text-secondary">
-          {% for item in detection_timing_items %}
-            <div>{{ item.label }}: <code>{{ item.seconds }} s</code></div>
-          {% endfor %}
-        </div>
-      </div>
-      <div class="d-flex flex-wrap gap-4 small text-secondary">
-        <div>文件加载耗时：<code>{{ "%.3f"|format(file_load_seconds) }} s</code></div>
-        <div>异常检测耗时：<code>{{ "%.3f"|format(detect_seconds) }} s</code></div>
-      </div>
+      {% else %}
+        <div class="text-secondary small">暂无可用耗时数据。</div>
+      {% endif %}
     </div>
   </div>
 
