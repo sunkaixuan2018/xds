@@ -98,12 +98,9 @@ SENSITIVITY_OPTIONS = ("sensitive", "balanced", "relaxed")
 
 # 灵敏度档位对应的重度异常阈值倍率。
 LATENCY_SENSITIVITY_RATIOS = {
-    "sensitive": 1.10,
-    "balanced": 1.30,
-    "relaxed": 1.50,
-    "high": 1.10,
-    "medium": 1.30,
-    "low": 1.50,
+    "sensitive": 4,
+    "balanced": 7,
+    "relaxed": 10,
 }
 
 # 灵敏度档位在页面上的展示名。
@@ -111,9 +108,6 @@ LATENCY_SENSITIVITY_LABELS = {
     "sensitive": "灵敏",
     "balanced": "均衡",
     "relaxed": "宽松",
-    "high": "灵敏",
-    "medium": "均衡",
-    "low": "宽松",
 }
 
 # Plotly 生成 HTML 时是否内联 JS。
@@ -157,16 +151,16 @@ SCORE_WEIGHTS_BY_SCOPE = {
 @dataclass(frozen=True)
 class LatencyDetectorConfig:
     # TTFT SLA 阈值，单位毫秒。
-    ttft_sla: float = 25000.0
+    ttft_sla: float = 15000.0
 
     # TPOT SLA 阈值，单位毫秒。
-    tpot_sla: float = 45.0
+    tpot_sla: float = 50.0
 
     # 单点重度异常阈值倍率。
-    severe_ratio: float = 1.3
+    severe_ratio: float = 7
 
     # 轻度异常需要连续命中的窗口数。
-    mild_consecutive_windows: int = 2
+    mild_consecutive_windows: int = 10
 
     # 合并相邻事件时允许的空白窗口数。
     event_merge_gap: int = 0
