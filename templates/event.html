@@ -97,7 +97,7 @@
                   </td>
                   <td class="text-end">{{ c.peak_time_label }}</td>
                   <td class="text-end">
-                    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('user_detail', session_id=session_id, user_id=c.user_id) }}">查看用户</a>
+                    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('user_detail', session_id=session_id, user_id=c.user_id, event_idx=event_idx) }}">查看用户</a>
                   </td>
                 </tr>
               {% endfor %}

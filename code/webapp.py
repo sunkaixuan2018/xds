@@ -88,6 +88,12 @@ from latency_detector import detect_latency_anomalies
 UPLOAD_DIR.mkdir(exist_ok=True)
 
 
+# Large one-minute windows can create very large Plotly payloads. Keep the
+# visual trend readable while preserving anomaly and event boundary points.
+CHART_MAX_RENDER_POINTS = 3500
+EVENT_USER_CONTEXT_POINTS = 180
+
+
 
 
 
@@ -189,6 +195,49 @@ def _timing_breakdown(items: list[tuple[str, Any]], top_n: int = TIMING_PIE_TOP_
         row["seconds"] = _format_seconds(row["seconds_value"])
         row["percent"] = (row["seconds_value"] / total * 100.0) if total > 0 else 0.0
     return rows, total
+
+
+def _event_ranges(events: Any) -> list[tuple[int, int]]:
+    ranges: list[tuple[int, int]] = []
+    for item in events or []:
+        try:
+            a = int(item[0])
+            b = int(item[1])
+        except Exception:
+            continue
+        if b < a:
+            a, b = b, a
+        ranges.append((a, b))
+    return ranges
+
+
+def _chart_sample_indices(length: int, events: Any = None, *masks: Any) -> np.ndarray:
+    if length <= 0:
+        return np.asarray([], dtype=int)
+    if CHART_MAX_RENDER_POINTS <= 0 or length <= CHART_MAX_RENDER_POINTS:
+        return np.arange(length, dtype=int)
+
+    keep: list[int] = [0, length - 1]
+    for mask in masks:
+        idx = np.where(np.asarray(mask, dtype=bool))[0]
+        keep.extend(int(i) for i in idx)
+    for a, b in _event_ranges(events):
+        keep.extend([a, b])
+
+    base = np.linspace(0, length - 1, num=CHART_MAX_RENDER_POINTS, dtype=int)
+    keep_arr = np.asarray([i for i in keep if 0 <= i < length], dtype=int)
+    if keep_arr.size:
+        return np.unique(np.concatenate([base, keep_arr]))
+    return np.unique(base)
+
+
+def _slice_event_ranges(events: Any, start_idx: int, end_idx: int) -> list[tuple[int, int]]:
+    sliced: list[tuple[int, int]] = []
+    for a, b in _event_ranges(events):
+        if b < start_idx or a > end_idx:
+            continue
+        sliced.append((max(a, start_idx) - start_idx, min(b, end_idx) - start_idx))
+    return sliced
 
 
 def create_app() -> Flask:
@@ -572,43 +621,86 @@ def create_app() -> Flask:
 
         idx = user_ids.index(user_id)
 
-        t = [datetime.fromisoformat(x) for x in s["t"]]
-        user_fig = build_latency_user_figure(
-            t,
-            np_array(s["ttft"])[idx],
-            np_array(s["tpot"])[idx],
-            np_array(s["rpm"])[idx],
-            np_array(s["tpm"])[idx],
-            np_array(s["prompt_tokens"])[idx],
-            np_array(s["completion_tokens"])[idx],
-            np_bool_matrix(s["flags"])[idx],
-            s.get("events", []),
-            float(s["cfg"].get("ttft_sla", DEFAULT_LATENCY_CONFIG.ttft_sla)),
-            float(s["cfg"].get("tpot_sla", DEFAULT_LATENCY_CONFIG.tpot_sla)),
-            float(s["cfg"].get("ttft_sla", DEFAULT_LATENCY_CONFIG.ttft_sla))
-            * float(s["cfg"].get("severe_ratio", DEFAULT_LATENCY_CONFIG.severe_ratio)),
-            float(s["cfg"].get("tpot_sla", DEFAULT_LATENCY_CONFIG.tpot_sla))
-            * float(s["cfg"].get("severe_ratio", DEFAULT_LATENCY_CONFIG.severe_ratio)),
-        )
-        user_fig_html = pio.to_html(user_fig, full_html=False, include_plotlyjs=PLOTLY_INCLUDE_JS)
+        t_all = [datetime.fromisoformat(x) for x in s["t"]]
+        events_all = s.get("events", [])
+        chart_start_idx = 0
+        chart_end_idx = len(t_all) - 1
+        is_event_window = False
+        event_idx_arg = request.args.get("event_idx")
+        if event_idx_arg is not None and t_all:
+            try:
+                event_idx = int(event_idx_arg)
+            except ValueError:
+                event_idx = -1
+            reports = s.get("event_reports", [])
+            if 0 <= event_idx < len(reports):
+                ev = reports[event_idx]
+                a = int(ev.get("start_hour", 0))
+                b = int(ev.get("end_hour", a))
+                chart_start_idx = max(0, min(a, b) - EVENT_USER_CONTEXT_POINTS)
+                chart_end_idx = min(len(t_all) - 1, max(a, b) + EVENT_USER_CONTEXT_POINTS)
+                is_event_window = True
+
+        chart_slice = slice(chart_start_idx, chart_end_idx + 1)
+        t = t_all[chart_slice]
+        chart_events = _slice_event_ranges(events_all, chart_start_idx, chart_end_idx) if is_event_window else events_all
+        if is_event_window and t:
+            view_window_label = (
+                f"{t[0].strftime('%Y-%m-%d %H:%M')} ~ {t[-1].strftime('%Y-%m-%d %H:%M')}"
+                f"（事件前后各 {EVENT_USER_CONTEXT_POINTS} 个时间点）"
+            )
+        else:
+            view_window_label = "全量时间范围"
+
+        ttft_all = np_array(s["ttft"])
+        tpot_all = np_array(s["tpot"])
+        rpm_all = np_array(s["rpm"])
+        tpm_all = np_array(s["tpm"])
+        prompt_all = np_array(s["prompt_tokens"])
+        completion_all = np_array(s["completion_tokens"])
+        flags_all = np_bool_matrix(s["flags"])
+        system_ttft = np_array(s["system_ttft"])
+        system_tpot = np_array(s["system_tpot"])
+        system_rpm = np_array(s["system_rpm"])
+        system_tpm = np_array(s["system_tpm"])
+        sys_anom_ttft = np_bool(s["sys_anom_ttft"])
+        sys_anom_tpot = np_bool(s["sys_anom_tpot"])
+        ttft_sla = float(s["cfg"].get("ttft_sla", DEFAULT_LATENCY_CONFIG.ttft_sla))
+        tpot_sla = float(s["cfg"].get("tpot_sla", DEFAULT_LATENCY_CONFIG.tpot_sla))
+        severe_ratio = float(s["cfg"].get("severe_ratio", DEFAULT_LATENCY_CONFIG.severe_ratio))
 
         system_fig = build_latency_system_figure(
             t,
-            np_array(s["system_ttft"]),
-            np_array(s["system_tpot"]),
-            np_array(s["system_rpm"]),
-            np_array(s["system_tpm"]),
-            np_bool(s["sys_anom_ttft"]),
-            np_bool(s["sys_anom_tpot"]),
-            s.get("events", []),
-            float(s["cfg"].get("ttft_sla", DEFAULT_LATENCY_CONFIG.ttft_sla)),
-            float(s["cfg"].get("tpot_sla", DEFAULT_LATENCY_CONFIG.tpot_sla)),
-            float(s["cfg"].get("ttft_sla", DEFAULT_LATENCY_CONFIG.ttft_sla))
-            * float(s["cfg"].get("severe_ratio", DEFAULT_LATENCY_CONFIG.severe_ratio)),
-            float(s["cfg"].get("tpot_sla", DEFAULT_LATENCY_CONFIG.tpot_sla))
-            * float(s["cfg"].get("severe_ratio", DEFAULT_LATENCY_CONFIG.severe_ratio)),
+            system_ttft[chart_slice],
+            system_tpot[chart_slice],
+            system_rpm[chart_slice],
+            system_tpm[chart_slice],
+            sys_anom_ttft[chart_slice],
+            sys_anom_tpot[chart_slice],
+            chart_events,
+            ttft_sla,
+            tpot_sla,
+            ttft_sla * severe_ratio,
+            tpot_sla * severe_ratio,
         )
         system_fig_html = pio.to_html(system_fig, full_html=False, include_plotlyjs=PLOTLY_INCLUDE_JS)
+
+        user_fig = build_latency_user_figure(
+            t,
+            ttft_all[idx][chart_slice],
+            tpot_all[idx][chart_slice],
+            rpm_all[idx][chart_slice],
+            tpm_all[idx][chart_slice],
+            prompt_all[idx][chart_slice],
+            completion_all[idx][chart_slice],
+            flags_all[idx][chart_slice],
+            chart_events,
+            ttft_sla,
+            tpot_sla,
+            ttft_sla * severe_ratio,
+            tpot_sla * severe_ratio,
+        )
+        user_fig_html = pio.to_html(user_fig, full_html=False, include_plotlyjs=False)
 
         row = next((r for r in s["records_json"] if r["user_id"] == user_id), None)
         if row is None:
@@ -641,6 +733,8 @@ def create_app() -> Flask:
             row=row,
             user_fig_html=user_fig_html,
             system_fig_html=system_fig_html,
+            view_window_label=view_window_label,
+            is_event_window=is_event_window,
             cfg=s["cfg"],
         )
 
@@ -846,15 +940,17 @@ def build_latency_system_figure(
     system_tpm = np.asarray(system_tpm, dtype=float)
     sys_anom_ttft = np.asarray(sys_anom_ttft, dtype=bool)
     sys_anom_tpot = np.asarray(sys_anom_tpot, dtype=bool)
+    sample_idx = _chart_sample_indices(len(t), events, sys_anom_ttft, sys_anom_tpot)
+    sample_t = [t[int(i)] for i in sample_idx]
 
     fig.add_trace(
-        go.Scatter(x=t, y=system_ttft, mode="lines", name="SystemTTFT", line=dict(color="#d63384")),
+        go.Scattergl(x=sample_t, y=system_ttft[sample_idx], mode="lines", name="SystemTTFT", line=dict(color="#d63384")),
         row=1,
         col=1,
         secondary_y=False,
     )
     fig.add_trace(
-        go.Scatter(x=t, y=system_tpot, mode="lines", name="SystemTPOT", line=dict(color="#fd7e14")),
+        go.Scattergl(x=sample_t, y=system_tpot[sample_idx], mode="lines", name="SystemTPOT", line=dict(color="#fd7e14")),
         row=1,
         col=1,
         secondary_y=True,
@@ -867,7 +963,7 @@ def build_latency_system_figure(
     ttft_idx = np.where(sys_anom_ttft)[0]
     if ttft_idx.size:
         fig.add_trace(
-            go.Scatter(
+            go.Scattergl(
                 x=[t[i] for i in ttft_idx],
                 y=[system_ttft[i] for i in ttft_idx],
                 mode="markers",
@@ -881,7 +977,7 @@ def build_latency_system_figure(
     tpot_idx = np.where(sys_anom_tpot)[0]
     if tpot_idx.size:
         fig.add_trace(
-            go.Scatter(
+            go.Scattergl(
                 x=[t[i] for i in tpot_idx],
                 y=[system_tpot[i] for i in tpot_idx],
                 mode="markers",
@@ -894,13 +990,13 @@ def build_latency_system_figure(
         )
 
     fig.add_trace(
-        go.Scatter(x=t, y=system_rpm, mode="lines", name="SystemRPM", line=dict(color="#0d6efd")),
+        go.Scattergl(x=sample_t, y=system_rpm[sample_idx], mode="lines", name="SystemRPM", line=dict(color="#0d6efd")),
         row=2,
         col=1,
         secondary_y=False,
     )
     fig.add_trace(
-        go.Scatter(x=t, y=system_tpm, mode="lines", name="SystemTPM", line=dict(color="#20c997")),
+        go.Scattergl(x=sample_t, y=system_tpm[sample_idx], mode="lines", name="SystemTPM", line=dict(color="#20c997")),
         row=2,
         col=1,
         secondary_y=True,
@@ -968,15 +1064,17 @@ def build_latency_user_figure(
     prompt_tokens = np.asarray(prompt_tokens, dtype=float)
     completion_tokens = np.asarray(completion_tokens, dtype=float)
     flags = np.asarray(flags, dtype=bool)
+    sample_idx = _chart_sample_indices(len(t), events, flags)
+    sample_t = [t[int(i)] for i in sample_idx]
 
     fig.add_trace(
-        go.Scatter(x=t, y=ttft, mode="lines", name="UserTTFT", line=dict(color="#d63384")),
+        go.Scattergl(x=sample_t, y=ttft[sample_idx], mode="lines", name="UserTTFT", line=dict(color="#d63384")),
         row=1,
         col=1,
         secondary_y=False,
     )
     fig.add_trace(
-        go.Scatter(x=t, y=tpot, mode="lines", name="UserTPOT", line=dict(color="#fd7e14")),
+        go.Scattergl(x=sample_t, y=tpot[sample_idx], mode="lines", name="UserTPOT", line=dict(color="#fd7e14")),
         row=1,
         col=1,
         secondary_y=True,
@@ -989,7 +1087,7 @@ def build_latency_user_figure(
     hit_idx = np.where(flags)[0]
     if hit_idx.size:
         fig.add_trace(
-            go.Scatter(
+            go.Scattergl(
                 x=[t[i] for i in hit_idx],
                 y=[ttft[i] for i in hit_idx],
                 mode="markers",
@@ -1002,25 +1100,25 @@ def build_latency_user_figure(
         )
 
     fig.add_trace(
-        go.Scatter(x=t, y=rpm, mode="lines", name="UserRPM", line=dict(color="#0d6efd")),
+        go.Scattergl(x=sample_t, y=rpm[sample_idx], mode="lines", name="UserRPM", line=dict(color="#0d6efd")),
         row=2,
         col=1,
         secondary_y=False,
     )
     fig.add_trace(
-        go.Scatter(x=t, y=tpm, mode="lines", name="UserTPM", line=dict(color="#20c997")),
+        go.Scattergl(x=sample_t, y=tpm[sample_idx], mode="lines", name="UserTPM", line=dict(color="#20c997")),
         row=2,
         col=1,
         secondary_y=True,
     )
     fig.add_trace(
-        go.Scatter(x=t, y=prompt_tokens, mode="lines", name="PromptTokens", line=dict(color="#6f42c1")),
+        go.Scattergl(x=sample_t, y=prompt_tokens[sample_idx], mode="lines", name="PromptTokens", line=dict(color="#6f42c1")),
         row=3,
         col=1,
         secondary_y=False,
     )
     fig.add_trace(
-        go.Scatter(x=t, y=completion_tokens, mode="lines", name="CompletionTokens", line=dict(color="#198754")),
+        go.Scattergl(x=sample_t, y=completion_tokens[sample_idx], mode="lines", name="CompletionTokens", line=dict(color="#198754")),
         row=3,
         col=1,
         secondary_y=True,

@@ -9,6 +9,12 @@
         文件：<code>{{ file_name }}</code> ·
         <a href="{{ url_for('results', session_id=session_id) }}">返回结果页</a>
       </div>
+      <div class="text-secondary small">
+        图表范围：<code>{{ view_window_label }}</code>
+        {% if is_event_window %}
+          · <a href="{{ url_for('user_detail', session_id=session_id, user_id=user_id) }}">查看全量</a>
+        {% endif %}
+      </div>
     </div>
     <div class="d-flex gap-2">
       <a class="btn btn-outline-secondary" href="{{ url_for('results', session_id=session_id) }}">返回</a>

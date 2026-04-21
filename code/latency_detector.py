@@ -81,23 +81,58 @@ def _weighted_average_ignore_zero_1d(values: np.ndarray, weights: np.ndarray) ->
 
 
 def _collapse_duplicate_rows(df: pd.DataFrame) -> pd.DataFrame:
-    rows: list[dict[str, Any]] = []
-    for (domain_id, ts), g in df.groupby(["domain_id", "collect_time_std_parsed"], sort=True):
-        rpm_sum = float(g["rpm"].sum())
-        tpm_sum = float(g["tpm"].sum())
-        rows.append(
-            {
-                "domain_id": domain_id,
-                "collect_time_std_parsed": ts,
-                "rpm": rpm_sum,
-                "tpm": tpm_sum,
-                "ttft_avg": _weighted_average_ignore_zero_1d(g["ttft_avg"].to_numpy(), g["rpm"].to_numpy()),
-                "tpot_avg": _weighted_average_ignore_zero_1d(g["tpot_avg"].to_numpy(), g["rpm"].to_numpy()),
-                "prompt_tokens": _weighted_average_1d(g["prompt_tokens"].to_numpy(), g["rpm"].to_numpy()),
-                "completion_tokens": _weighted_average_1d(g["completion_tokens"].to_numpy(), g["rpm"].to_numpy()),
-            }
+    out = df.copy()
+    weights = out["rpm"].where(np.isfinite(out["rpm"]) & (out["rpm"] > 0), 0.0)
+
+    for col in ("ttft_avg", "tpot_avg"):
+        valid = np.isfinite(out[col]) & (out[col] != 0) & (weights > 0)
+        out[f"_{col}_weight"] = weights.where(valid, 0.0)
+        out[f"_{col}_weighted"] = (out[col] * weights).where(valid, 0.0)
+
+    for col in ("prompt_tokens", "completion_tokens"):
+        valid = np.isfinite(out[col]) & (weights > 0)
+        out[f"_{col}_weight"] = weights.where(valid, 0.0)
+        out[f"_{col}_weighted"] = (out[col] * weights).where(valid, 0.0)
+
+    grouped = (
+        out.groupby(["domain_id", "collect_time_std_parsed"], sort=True)
+        .agg(
+            rpm=("rpm", "sum"),
+            tpm=("tpm", "sum"),
+            ttft_weight=("_ttft_avg_weight", "sum"),
+            ttft_weighted=("_ttft_avg_weighted", "sum"),
+            tpot_weight=("_tpot_avg_weight", "sum"),
+            tpot_weighted=("_tpot_avg_weighted", "sum"),
+            prompt_weight=("_prompt_tokens_weight", "sum"),
+            prompt_weighted=("_prompt_tokens_weighted", "sum"),
+            completion_weight=("_completion_tokens_weight", "sum"),
+            completion_weighted=("_completion_tokens_weighted", "sum"),
         )
-    return pd.DataFrame.from_records(rows)
+        .reset_index()
+    )
+
+    for out_col, weighted_col, weight_col in (
+        ("ttft_avg", "ttft_weighted", "ttft_weight"),
+        ("tpot_avg", "tpot_weighted", "tpot_weight"),
+        ("prompt_tokens", "prompt_weighted", "prompt_weight"),
+        ("completion_tokens", "completion_weighted", "completion_weight"),
+    ):
+        denom = grouped[weight_col].to_numpy(dtype=float)
+        numer = grouped[weighted_col].to_numpy(dtype=float)
+        grouped[out_col] = np.divide(numer, denom, out=np.zeros_like(numer, dtype=float), where=denom > 0)
+
+    return grouped[
+        [
+            "domain_id",
+            "collect_time_std_parsed",
+            "rpm",
+            "tpm",
+            "ttft_avg",
+            "tpot_avg",
+            "prompt_tokens",
+            "completion_tokens",
+        ]
+    ]
 
 
 def _infer_time_freq(times: pd.Series) -> pd.Timedelta:
