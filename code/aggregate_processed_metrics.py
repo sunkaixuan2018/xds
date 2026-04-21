@@ -33,6 +33,9 @@ NUMERIC_COLUMNS = [
     "completion_tokens",
 ]
 
+MIN_GROUPS_FOR_PROGRESS = 1000
+PROGRESS_STEPS = 10
+
 
 def resolve_workers(workers: int, task_count: int) -> int:
     if task_count <= 1:
@@ -71,7 +74,6 @@ def parse_bucket_freq(granularity: str) -> str:
 
 def parse_time_column(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
-    print(f"[progress] parsing time column rows={len(out)}")
     s = out["collect_time_std"].astype(str).str.strip().str.replace(r"\s+", " ", regex=True)
     parsed = pd.to_datetime(s, format="%Y-%m-%d %H:%M:%S", errors="coerce")
 
@@ -104,7 +106,7 @@ def weighted_average_ignore_zero(values: pd.Series, weights: pd.Series) -> float
     return float((values_num[valid] * weights_num[valid]).sum() / weights_num[valid].sum())
 
 
-def aggregate_one_sheet(df: pd.DataFrame, bucket_freq: str) -> pd.DataFrame:
+def aggregate_one_sheet(df: pd.DataFrame, bucket_freq: str, progress_label: str = "") -> pd.DataFrame:
     out = parse_time_column(df)
     out["domain_id"] = out["domain_id"].fillna("").astype(str).str.strip()
     out = out[out["domain_id"] != ""].copy()
@@ -117,10 +119,15 @@ def aggregate_one_sheet(df: pd.DataFrame, bucket_freq: str) -> pd.DataFrame:
     grouped_rows: list[dict[str, object]] = []
     group_cols = ["domain_id", "bucket_time"]
     grouped = list(out.groupby(group_cols, sort=True))
-    print(f"[progress] aggregating groups total={len(grouped)} bucket={bucket_freq}")
+    total_groups = len(grouped)
+    label = f" {progress_label}" if progress_label else ""
+    print(f"[progress] sheet{label} groups={total_groups} bucket={bucket_freq}")
+    show_group_progress = total_groups >= MIN_GROUPS_FOR_PROGRESS
+    progress_interval = max(1, total_groups // PROGRESS_STEPS) if show_group_progress else 0
     for idx, ((domain_id, bucket_time), g) in enumerate(grouped, start=1):
-        if idx == 1 or idx % 500 == 0 or idx == len(grouped):
-            print(f"[progress] aggregated group {idx}/{len(grouped)} domain_id={domain_id} bucket_time={bucket_time}")
+        if show_group_progress and (idx % progress_interval == 0 or idx == total_groups):
+            percent = int(idx * 100 / total_groups)
+            print(f"[progress] sheet{label} groups {idx}/{total_groups} ({percent}%)")
         rpm_sum = float(g["rpm"].sum())
         tpm_sum = float(g["tpm"].sum())
         grouped_rows.append(
@@ -176,9 +183,9 @@ def aggregate_sheet_task(
     frame: pd.DataFrame,
     bucket_freq: str,
 ) -> tuple[int, str, pd.DataFrame]:
-    print(f"[progress] processing sheet {idx}/{total}: {sheet_name} input_rows={len(frame)}")
-    aggregated = aggregate_one_sheet(frame, bucket_freq)
-    print(f"[sheet] {sheet_name} rows={len(aggregated)} granularity={bucket_freq}")
+    print(f"[progress] sheet {idx}/{total} start rows={len(frame)} name={sheet_name}")
+    aggregated = aggregate_one_sheet(frame, bucket_freq, f"{idx}/{total}")
+    print(f"[progress] sheet {idx}/{total} done output_rows={len(aggregated)}")
     return idx, sheet_name, aggregated
 
 
