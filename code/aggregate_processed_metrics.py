@@ -35,6 +35,7 @@ NUMERIC_COLUMNS = [
 
 MIN_GROUPS_FOR_PROGRESS = 1000
 PROGRESS_STEPS = 10
+CHECKPOINT_SHEETS = 10
 
 
 def resolve_workers(workers: int, task_count: int) -> int:
@@ -151,29 +152,43 @@ def aggregate_one_sheet(df: pd.DataFrame, bucket_freq: str, progress_label: str 
     return result
 
 
-def load_workbook_frames(input_path: Path) -> list[tuple[str, pd.DataFrame]]:
+def iter_workbook_batches(input_path: Path, batch_size: int):
+    if batch_size < 1:
+        raise ValueError("batch_size must be >= 1")
+
     print(f"[progress] opening workbook {input_path}")
     xl = pd.ExcelFile(input_path)
-    print(f"[progress] workbook sheets={len(xl.sheet_names)}")
-    frames: list[tuple[str, pd.DataFrame]] = []
+    total_sheets = len(xl.sheet_names)
+    print(f"[progress] workbook sheets={total_sheets}")
+
+    batch: list[tuple[int, str, pd.DataFrame]] = []
     for idx, sheet_name in enumerate(xl.sheet_names, start=1):
-        print(f"[progress] reading sheet {idx}/{len(xl.sheet_names)}: {sheet_name}")
-        frame = pd.read_excel(input_path, sheet_name=sheet_name)
-        frames.append((sheet_name, frame))
-    return frames
+        print(f"[progress] reading sheet {idx}/{total_sheets}: {sheet_name}")
+        frame = pd.read_excel(xl, sheet_name=sheet_name)
+        batch.append((idx, sheet_name, frame))
+        if len(batch) >= batch_size:
+            yield total_sheets, batch
+            batch = []
+
+    if batch:
+        yield total_sheets, batch
 
 
-def write_workbook(frames: list[tuple[str, pd.DataFrame]], output_path: Path) -> Path:
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = output_path.with_name(f"{output_path.stem}.tmp{output_path.suffix}")
-    print(f"[progress] writing workbook sheets={len(frames)} output={output_path}")
-    with pd.ExcelWriter(temp_path, engine="openpyxl") as writer:
-        for idx, (sheet_name, frame) in enumerate(frames, start=1):
-            print(f"[progress] writing sheet {idx}/{len(frames)}: {sheet_name} rows={len(frame)}")
-            frame.to_excel(writer, sheet_name=sheet_name, index=False)
-    temp_path.replace(output_path)
-    print(f"[ok] wrote {output_path}")
-    return output_path
+def write_sheet_batch(
+    writer: pd.ExcelWriter,
+    frames: list[tuple[int, str, pd.DataFrame]],
+    total_sheets: int,
+    checkpoint_path: Path,
+    sheets_written: int,
+) -> int:
+    for idx, sheet_name, frame in frames:
+        print(f"[progress] writing sheet {idx}/{total_sheets}: {sheet_name} rows={len(frame)}")
+        frame.to_excel(writer, sheet_name=sheet_name, index=False)
+        sheets_written += 1
+
+    writer.book.save(checkpoint_path)
+    print(f"[progress] checkpoint saved sheets={sheets_written}/{total_sheets} path={checkpoint_path}")
+    return sheets_written
 
 
 def aggregate_sheet_task(
@@ -190,53 +205,67 @@ def aggregate_sheet_task(
 
 
 def aggregate_frames(
-    source_frames: list[tuple[str, pd.DataFrame]],
+    source_frames: list[tuple[int, str, pd.DataFrame]],
+    total_sheets: int,
     bucket_freq: str,
     workers: int,
-) -> list[tuple[str, pd.DataFrame]]:
+) -> list[tuple[int, str, pd.DataFrame]]:
     max_workers = resolve_workers(workers, len(source_frames))
-    print(f"[progress] aggregating sheets workers={max_workers}")
+    first_idx = source_frames[0][0]
+    last_idx = source_frames[-1][0]
+    print(f"[progress] aggregating sheet batch {first_idx}-{last_idx}/{total_sheets} workers={max_workers}")
 
     if max_workers == 1:
-        frames: list[tuple[str, pd.DataFrame]] = []
-        for idx, (sheet_name, frame) in enumerate(source_frames, start=1):
+        frames: list[tuple[int, str, pd.DataFrame]] = []
+        for idx, sheet_name, frame in source_frames:
             _, task_sheet_name, aggregated = aggregate_sheet_task(
                 idx,
-                len(source_frames),
+                total_sheets,
                 sheet_name,
                 frame,
                 bucket_freq,
             )
-            frames.append((task_sheet_name, aggregated))
+            frames.append((idx, task_sheet_name, aggregated))
         return frames
 
-    results: list[tuple[str, pd.DataFrame] | None] = [None] * len(source_frames)
+    results: list[tuple[int, str, pd.DataFrame]] = []
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = [
             executor.submit(
                 aggregate_sheet_task,
                 idx,
-                len(source_frames),
+                total_sheets,
                 sheet_name,
                 frame,
                 bucket_freq,
             )
-            for idx, (sheet_name, frame) in enumerate(source_frames, start=1)
+            for idx, sheet_name, frame in source_frames
         ]
         for future in as_completed(futures):
             idx, sheet_name, aggregated = future.result()
-            results[idx - 1] = (sheet_name, aggregated)
+            results.append((idx, sheet_name, aggregated))
 
-    return [item for item in results if item is not None]
+    return sorted(results, key=lambda item: item[0])
 
 
 def aggregate_workbook(input_path: Path, output_path: Path, granularity: str, workers: int = 0) -> Path:
     bucket_freq = parse_bucket_freq(granularity)
     print(f"[progress] start aggregation input={input_path} output={output_path} bucket={bucket_freq}")
-    source_frames = load_workbook_frames(input_path)
-    out_frames = aggregate_frames(source_frames, bucket_freq, workers)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = output_path.with_name(f"{output_path.stem}.tmp{output_path.suffix}")
+    if temp_path.exists():
+        temp_path.unlink()
 
-    return write_workbook(out_frames, output_path)
+    sheets_written = 0
+    print(f"[progress] writing checkpoints every {CHECKPOINT_SHEETS} sheets")
+    with pd.ExcelWriter(temp_path, engine="openpyxl") as writer:
+        for total_sheets, source_frames in iter_workbook_batches(input_path, CHECKPOINT_SHEETS):
+            out_frames = aggregate_frames(source_frames, total_sheets, bucket_freq, workers)
+            sheets_written = write_sheet_batch(writer, out_frames, total_sheets, temp_path, sheets_written)
+
+    temp_path.replace(output_path)
+    print(f"[ok] wrote {output_path} sheets={sheets_written}")
+    return output_path
 
 
 def main() -> int:
