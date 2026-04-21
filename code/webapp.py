@@ -70,7 +70,7 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 
 # Multi-sheet aggregated workbooks use `{group_key}__{service_name}`.
 POOL_SHEET_SEP = "__"
-POOL_ALL_MARKERS = frozenset({"ALL", "??", "_ALL_"})
+POOL_ALL_MARKERS = frozenset({"ALL", "全部", "_ALL_"})
 
 
 def parse_pool_sheet_name(sheet_name: str) -> tuple[str, str, bool]:
@@ -99,13 +99,13 @@ def build_pool_sheet_groups(sheet_names: list[str]) -> list[dict[str, Any]]:
         for sn in sorted(buckets[pool_key]):
             _, svc, is_all = parse_pool_sheet_name(sn)
             if is_all:
-                label = "????"
+                label = "全部服务"
             elif svc:
                 label = svc
             else:
-                label = "????"
+                label = "未命名服务"
             options.append({"sheet_name": sn, "label": label})
-        options.sort(key=lambda o: (0 if o["label"] == "????" else 1, o["label"]))
+        options.sort(key=lambda o: (0 if o["label"] == "全部服务" else 1, o["label"]))
         groups.append({"pool_key": pool_key, "options": options})
     return groups
 
@@ -129,14 +129,14 @@ def _latency_config_for_sensitivity(sensitivity: str, max_events: int) -> Latenc
 
 def _latency_sensitivity_label(sensitivity: str) -> str:
     mapping = {
-        "sensitive": "??",
-        "balanced": "??",
-        "relaxed": "??",
-        "high": "??",
-        "medium": "??",
-        "low": "??",
+        "sensitive": "灵敏",
+        "balanced": "均衡",
+        "relaxed": "宽松",
+        "high": "灵敏",
+        "medium": "均衡",
+        "low": "宽松",
     }
-    return mapping.get((sensitivity or "balanced").strip().lower(), "??")
+    return mapping.get((sensitivity or "balanced").strip().lower(), "均衡")
 
 
 
@@ -155,7 +155,7 @@ def _timing_item(label: str, value: Any) -> dict[str, str]:
 
 def create_app() -> Flask:
 
-    # webapp.py 绉诲埌 code/ 鍚庯紝鏄惧紡鎸囧畾妯℃澘鍜岄潤鎬佽祫婧愮洰褰?
+    # webapp.py lives under code/, so point Flask at the project template/static dirs.
 
     app = Flask(
 
@@ -175,7 +175,7 @@ def create_app() -> Flask:
 
     app.config["SESSIONS"] = {}
 
-    # 姹犲瓙鍒嗘瀽锛氫笂浼?result Excel 鍚庣殑涓存椂淇℃伅 upload_id -> { file_path, sheet_names, file_name }
+    # Pool analysis upload cache: upload_id -> { file_path, sheet_names, file_name }.
 
     app.config["POOL_UPLOADS"] = {}
 
@@ -203,11 +203,11 @@ def create_app() -> Flask:
         f_workbook = request.files.get("file_workbook")
         has_file = bool(f_workbook and f_workbook.filename)
         if not has_file:
-            flash("????????? Excel ???", "danger")
+            flash("请先上传 Excel 文件", "danger")
             return redirect(url_for("pool_index"))
 
         if not (f_workbook.filename.lower().endswith(".xlsx") or f_workbook.filename.lower().endswith(".xls")):
-            flash("??????????? Excel?.xlsx / .xls??", "danger")
+            flash("请上传 Excel 文件（.xlsx / .xls）", "danger")
             return redirect(url_for("pool_index"))
 
         filename = secure_filename(f_workbook.filename)
@@ -220,11 +220,11 @@ def create_app() -> Flask:
             sheet_names = xl.sheet_names
             xl.close()
         except Exception as e:
-            flash(f"?? Excel ???{e}", "danger")
+            flash(f"读取 Excel 失败：{e}", "danger")
             return redirect(url_for("pool_index"))
 
         if not sheet_names:
-            flash("???????? sheet?", "danger")
+            flash("Excel 中没有可用的 sheet", "danger")
             return redirect(url_for("pool_index"))
 
         app.config["POOL_UPLOADS"][upload_id] = {
@@ -245,7 +245,7 @@ def create_app() -> Flask:
 
         if not info:
 
-            flash("?????????????? Excel?", "warning")
+            flash("上传信息已失效，请重新上传 Excel", "warning")
 
             return redirect(url_for("pool_index"))
 
@@ -273,7 +273,7 @@ def create_app() -> Flask:
 
         if not info:
 
-            flash("?????????????? Excel?", "warning")
+            flash("上传信息已失效，请重新上传 Excel", "warning")
 
             return redirect(url_for("pool_index"))
 
@@ -281,7 +281,7 @@ def create_app() -> Flask:
 
         if not sheet_name or sheet_name not in info["sheet_names"]:
 
-            flash("???????? sheet?", "danger")
+            flash("请选择有效的 sheet", "danger")
 
             return redirect(url_for("pool_select", upload_id=upload_id))
 
@@ -291,7 +291,7 @@ def create_app() -> Flask:
             df = pd.read_excel(info["file_path"], sheet_name=sheet_name)
             file_load_seconds = perf_counter() - load_started
             if df.empty:
-                raise ValueError("?? sheet ???????")
+                raise ValueError("当前 sheet 没有可分析数据")
 
             config_started = perf_counter()
             sensitivity = request.form.get("sensitivity", "balanced").strip() or "balanced"
@@ -362,7 +362,7 @@ def create_app() -> Flask:
             app.config["SESSIONS"][session_id] = session_payload
             return redirect(url_for("results", session_id=session_id))
         except Exception as e:
-            flash(f"?????{e}", "danger")
+            flash(f"分析失败：{e}", "danger")
             return redirect(url_for("pool_select", upload_id=upload_id))
 
 
@@ -375,7 +375,7 @@ def create_app() -> Flask:
 
         if s is None:
 
-            flash("???????????????????", "warning")
+            flash("分析结果已失效，请重新分析", "warning")
 
             return redirect(url_for("index"))
 
@@ -488,7 +488,7 @@ def create_app() -> Flask:
             event_reports=event_reports_view,
             all_users=all_users,
             system_fig_html=system_fig_html,
-            sensitivity_mode_label=s.get("sensitivity_mode_label", "??"),
+            sensitivity_mode_label=s.get("sensitivity_mode_label", "均衡"),
             time_step_minutes=int(s.get("time_step_minutes", 60)),
             file_load_seconds=float(s.get("file_load_seconds", 0.0)),
             detect_seconds=float(s.get("detect_seconds", 0.0)),
@@ -513,7 +513,7 @@ def create_app() -> Flask:
 
         if s is None:
 
-            flash("???????????????????", "warning")
+            flash("分析结果已失效，请重新分析", "warning")
 
             return redirect(url_for("index"))
 
@@ -523,7 +523,7 @@ def create_app() -> Flask:
 
         if user_id not in user_ids:
 
-            flash("??????", "danger")
+            flash("用户不存在", "danger")
 
             return redirect(url_for("results", session_id=session_id))
 
@@ -609,7 +609,7 @@ def create_app() -> Flask:
 
         if s is None:
 
-            flash("???????????????????", "warning")
+            flash("分析结果已失效，请重新分析", "warning")
 
             return redirect(url_for("index"))
 
@@ -619,7 +619,7 @@ def create_app() -> Flask:
 
         if event_idx < 0 or event_idx >= len(reports):
 
-            flash("??????", "danger")
+            flash("事件不存在", "danger")
 
             return redirect(url_for("results", session_id=session_id))
 
@@ -778,7 +778,7 @@ def build_latency_system_figure(
         vertical_spacing=0.08,
         row_heights=[0.55, 0.45],
         specs=[[{"secondary_y": True}], [{"secondary_y": True}]],
-        subplot_titles=("?? TTFT / TPOT", "?? RPM / TPM"),
+        subplot_titles=("系统 TTFT / TPOT", "系统 RPM / TPM"),
     )
 
     system_ttft = np.asarray(system_ttft, dtype=float)
@@ -865,9 +865,9 @@ def build_latency_system_figure(
     fig.update_yaxes(title_text="TPOT (ms)", row=1, col=1, secondary_y=True)
     fig.update_yaxes(title_text="RPM", row=2, col=1, secondary_y=False)
     fig.update_yaxes(title_text="TPM", row=2, col=1, secondary_y=True)
-    fig.update_xaxes(title_text="??", row=2, col=1)
+    fig.update_xaxes(title_text="时间", row=2, col=1)
     fig.update_layout(
-        title="?????????",
+        title="系统延迟与流量趋势",
         template="plotly_white",
         width=_CHART_WIDTH,
         height=680,
@@ -899,7 +899,7 @@ def build_latency_user_figure(
         vertical_spacing=0.06,
         row_heights=[0.4, 0.3, 0.3],
         specs=[[{"secondary_y": True}], [{"secondary_y": True}], [{"secondary_y": True}]],
-        subplot_titles=("?? TTFT / TPOT", "?? RPM / TPM", "?? / ????"),
+        subplot_titles=("用户 TTFT / TPOT", "用户 RPM / TPM", "输入 / 输出 Tokens"),
     )
 
     ttft = np.asarray(ttft, dtype=float)
@@ -987,9 +987,9 @@ def build_latency_user_figure(
     fig.update_yaxes(title_text="TPM", row=2, col=1, secondary_y=True)
     fig.update_yaxes(title_text="Prompt", row=3, col=1, secondary_y=False)
     fig.update_yaxes(title_text="Completion", row=3, col=1, secondary_y=True)
-    fig.update_xaxes(title_text="??", row=3, col=1)
+    fig.update_xaxes(title_text="时间", row=3, col=1)
     fig.update_layout(
-        title="?????????",
+        title="用户延迟、流量与 Token 趋势",
         template="plotly_white",
         width=_CHART_WIDTH,
         height=860,
