@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import os
 import re
 from pathlib import Path
 
@@ -30,6 +32,14 @@ NUMERIC_COLUMNS = [
     "prompt_tokens",
     "completion_tokens",
 ]
+
+
+def resolve_workers(workers: int, task_count: int) -> int:
+    if task_count <= 1:
+        return 1
+    if workers < 1:
+        return min(task_count, 32, (os.cpu_count() or 1) + 4)
+    return min(task_count, workers)
 
 
 def parse_bucket_freq(granularity: str) -> str:
@@ -159,17 +169,65 @@ def write_workbook(frames: list[tuple[str, pd.DataFrame]], output_path: Path) ->
     return output_path
 
 
-def aggregate_workbook(input_path: Path, output_path: Path, granularity: str) -> Path:
+def aggregate_sheet_task(
+    idx: int,
+    total: int,
+    sheet_name: str,
+    frame: pd.DataFrame,
+    bucket_freq: str,
+) -> tuple[int, str, pd.DataFrame]:
+    print(f"[progress] processing sheet {idx}/{total}: {sheet_name} input_rows={len(frame)}")
+    aggregated = aggregate_one_sheet(frame, bucket_freq)
+    print(f"[sheet] {sheet_name} rows={len(aggregated)} granularity={bucket_freq}")
+    return idx, sheet_name, aggregated
+
+
+def aggregate_frames(
+    source_frames: list[tuple[str, pd.DataFrame]],
+    bucket_freq: str,
+    workers: int,
+) -> list[tuple[str, pd.DataFrame]]:
+    max_workers = resolve_workers(workers, len(source_frames))
+    print(f"[progress] aggregating sheets workers={max_workers}")
+
+    if max_workers == 1:
+        frames: list[tuple[str, pd.DataFrame]] = []
+        for idx, (sheet_name, frame) in enumerate(source_frames, start=1):
+            _, task_sheet_name, aggregated = aggregate_sheet_task(
+                idx,
+                len(source_frames),
+                sheet_name,
+                frame,
+                bucket_freq,
+            )
+            frames.append((task_sheet_name, aggregated))
+        return frames
+
+    results: list[tuple[str, pd.DataFrame] | None] = [None] * len(source_frames)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [
+            executor.submit(
+                aggregate_sheet_task,
+                idx,
+                len(source_frames),
+                sheet_name,
+                frame,
+                bucket_freq,
+            )
+            for idx, (sheet_name, frame) in enumerate(source_frames, start=1)
+        ]
+        for future in as_completed(futures):
+            idx, sheet_name, aggregated = future.result()
+            results[idx - 1] = (sheet_name, aggregated)
+
+    return [item for item in results if item is not None]
+
+
+def aggregate_workbook(input_path: Path, output_path: Path, granularity: str, workers: int = 0) -> Path:
     bucket_freq = parse_bucket_freq(granularity)
     print(f"[progress] start aggregation input={input_path} output={output_path} bucket={bucket_freq}")
     source_frames = load_workbook_frames(input_path)
-
-    out_frames: list[tuple[str, pd.DataFrame]] = []
-    for idx, (sheet_name, frame) in enumerate(source_frames, start=1):
-        print(f"[progress] processing sheet {idx}/{len(source_frames)}: {sheet_name} input_rows={len(frame)}")
-        aggregated = aggregate_one_sheet(frame, bucket_freq)
-        out_frames.append((sheet_name, aggregated))
-        print(f"[sheet] {sheet_name} rows={len(aggregated)} granularity={bucket_freq}")
+    out_frames = aggregate_frames(source_frames, bucket_freq, workers)
 
     return write_workbook(out_frames, output_path)
 
@@ -183,9 +241,10 @@ def main() -> int:
         default="1h",
         help="Bucket size: 1h or any positive minute bucket, for example 1min, 5min, 10min, 30min.",
     )
+    ap.add_argument("--workers", type=int, default=0, help="Thread workers. Use 0 for auto, 1 to disable threading.")
     args = ap.parse_args()
 
-    aggregate_workbook(args.input, args.output, args.granularity)
+    aggregate_workbook(args.input, args.output, args.granularity, args.workers)
     return 0
 
 

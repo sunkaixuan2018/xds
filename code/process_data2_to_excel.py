@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import hashlib
+import os
 import re
 from pathlib import Path
 
@@ -44,6 +46,15 @@ NUMERIC_COLUMNS = [
     "prompt_tokens",
     "completion_tokens",
 ]
+
+
+def resolve_workers(workers: int, task_count: int) -> int:
+    if task_count <= 1:
+        return 1
+    if workers < 1:
+        return min(task_count, 32, (os.cpu_count() or 1) + 4)
+    return min(task_count, workers)
+
 
 _INVALID_SHEET_CHARS = re.compile(r"[\[\]\:\*\?\/\\]")
 EXCEL_SHEET_MAX = 31
@@ -102,20 +113,38 @@ def _read_csv_flexible(path: Path) -> pd.DataFrame:
     raise RuntimeError(f"Failed to read csv: {path}") from last_error
 
 
-def load_all_csv(input_dir: Path) -> pd.DataFrame:
+def read_csv_task(idx: int, total: int, path: Path) -> tuple[int, pd.DataFrame]:
+    print(f"[progress] reading file {idx}/{total}: {path.name}")
+    df = _read_csv_flexible(path)
+    df["__source_file"] = path.name
+    print(f"       rows={len(df)}")
+    return idx, df
+
+
+def load_all_csv(input_dir: Path, workers: int = 0) -> pd.DataFrame:
     files = sorted(input_dir.glob("*.csv"))
     if not files:
         raise FileNotFoundError(f"No csv files found under: {input_dir}")
 
-    print(f"[progress] loading csv files from {input_dir} total_files={len(files)}")
-    dfs: list[pd.DataFrame] = []
-    for idx, f in enumerate(files, start=1):
-        print(f"[progress] reading file {idx}/{len(files)}: {f.name}")
-        df = _read_csv_flexible(f)
-        df["__source_file"] = f.name
-        dfs.append(df)
-        print(f"       rows={len(df)}")
+    max_workers = resolve_workers(workers, len(files))
+    print(f"[progress] loading csv files from {input_dir} total_files={len(files)} workers={max_workers}")
+    dfs_by_index: list[pd.DataFrame | None] = [None] * len(files)
 
+    if max_workers == 1:
+        for idx, f in enumerate(files, start=1):
+            read_idx, df = read_csv_task(idx, len(files), f)
+            dfs_by_index[read_idx - 1] = df
+    else:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [
+                executor.submit(read_csv_task, idx, len(files), f)
+                for idx, f in enumerate(files, start=1)
+            ]
+            for future in as_completed(futures):
+                read_idx, df = future.result()
+                dfs_by_index[read_idx - 1] = df
+
+    dfs = [df for df in dfs_by_index if df is not None]
     combined = pd.concat(dfs, ignore_index=True)
     print(f"[load] combined rows={len(combined)}")
     return combined
@@ -160,7 +189,25 @@ def validate_columns(df: pd.DataFrame) -> None:
         raise ValueError(f"Missing required columns: {missing}")
 
 
-def build_output_frames(df: pd.DataFrame) -> list[tuple[str, pd.DataFrame]]:
+def build_sheet_task(
+    idx: int,
+    total: int,
+    sheet_name: str,
+    infer_service_id: str,
+    service_name: str,
+    group: pd.DataFrame,
+) -> tuple[int, str, pd.DataFrame]:
+    print(
+        f"[progress] preparing sheet {idx}/{total} "
+        f"infer_service_id={infer_service_id} service_name={service_name} rows={len(group)}"
+    )
+    sheet_df = group[OUTPUT_COLUMNS].copy()
+    sheet_df = sheet_df.sort_values(["domain_id", "collect_time_std"]).reset_index(drop=True)
+    print(f"[sheet] {sheet_name} rows={len(sheet_df)}")
+    return idx, sheet_name, sheet_df
+
+
+def build_output_frames(df: pd.DataFrame, workers: int = 0) -> list[tuple[str, pd.DataFrame]]:
     df = parse_collect_time_std(df)
     validate_columns(df)
 
@@ -179,19 +226,41 @@ def build_output_frames(df: pd.DataFrame) -> list[tuple[str, pd.DataFrame]]:
     out = out.sort_values(["infer_service_id", "service_name", "domain_id", "collect_time_std_parsed"]).reset_index(drop=True)
 
     used_sheet_names: set[str] = set()
-    frames: list[tuple[str, pd.DataFrame]] = []
     grouped = list(out.groupby(["infer_service_id", "service_name"], sort=True))
-    print(f"[progress] building sheets total_groups={len(grouped)}")
+    max_workers = resolve_workers(workers, len(grouped))
+    print(f"[progress] building sheets total_groups={len(grouped)} workers={max_workers}")
+
+    sheet_tasks: list[tuple[int, str, str, str, pd.DataFrame]] = []
     for idx, ((infer_service_id, service_name), group) in enumerate(grouped, start=1):
-        print(
-            f"[progress] preparing sheet {idx}/{len(grouped)} "
-            f"infer_service_id={infer_service_id} service_name={service_name} rows={len(group)}"
-        )
         sheet_name = build_sheet_name(infer_service_id, service_name, used_sheet_names)
-        sheet_df = group[OUTPUT_COLUMNS].copy()
-        sheet_df = sheet_df.sort_values(["domain_id", "collect_time_std"]).reset_index(drop=True)
-        frames.append((sheet_name, sheet_df))
-        print(f"[sheet] {sheet_name} rows={len(sheet_df)}")
+        sheet_tasks.append((idx, sheet_name, infer_service_id, service_name, group))
+
+    frames_by_index: list[tuple[str, pd.DataFrame] | None] = [None] * len(sheet_tasks)
+    if max_workers == 1:
+        for idx, sheet_name, infer_service_id, service_name, group in sheet_tasks:
+            task_idx, task_sheet_name, sheet_df = build_sheet_task(
+                idx, len(sheet_tasks), sheet_name, infer_service_id, service_name, group
+            )
+            frames_by_index[task_idx - 1] = (task_sheet_name, sheet_df)
+    else:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [
+                executor.submit(
+                    build_sheet_task,
+                    idx,
+                    len(sheet_tasks),
+                    sheet_name,
+                    infer_service_id,
+                    service_name,
+                    group,
+                )
+                for idx, sheet_name, infer_service_id, service_name, group in sheet_tasks
+            ]
+            for future in as_completed(futures):
+                task_idx, task_sheet_name, sheet_df = future.result()
+                frames_by_index[task_idx - 1] = (task_sheet_name, sheet_df)
+
+    frames = [item for item in frames_by_index if item is not None]
 
     if not frames:
         raise ValueError("No valid rows remained after filtering.")
@@ -216,10 +285,11 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Filter data2 csv files and write grouped excel sheets.")
     ap.add_argument("--input-dir", type=Path, default=DEFAULT_INPUT_DIR, help="Directory containing source csv files.")
     ap.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_PATH, help="Output xlsx path.")
+    ap.add_argument("--workers", type=int, default=0, help="Thread workers. Use 0 for auto, 1 to disable threading.")
     args = ap.parse_args()
 
-    df = load_all_csv(args.input_dir)
-    frames = build_output_frames(df)
+    df = load_all_csv(args.input_dir, args.workers)
+    frames = build_output_frames(df, args.workers)
     write_excel(frames, args.output)
     return 0
 

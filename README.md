@@ -27,6 +27,12 @@ python code/aggregate_processed_metrics.py --granularity 1h
 ```
 
 `--granularity` 支持 `1h`，也支持任意正整数分钟粒度，例如 `1min`、`5min`、`10min`、`30min`。
+两个处理脚本都支持 `--workers` 开启多线程，`0` 表示自动选择线程数，`1` 表示单线程。例如：
+
+```powershell
+python code/process_data2_to_excel.py --workers 8
+python code/aggregate_processed_metrics.py --granularity 1min --workers 8
+```
 
 默认输出文件：
 
